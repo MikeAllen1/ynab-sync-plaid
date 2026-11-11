@@ -5,7 +5,7 @@ import type { Env } from "../src/types";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 const env = { ADMIN_TOKEN: "admin-test-token" } as Env;
-const cookie = "__Host-ynab_admin=v1.1799999999.admin-test-token";
+const cookie = `__Host-ynab_admin=${encodeURIComponent(`v1.${Math.floor(Date.now() / 1000)}.admin-test-token`)}`;
 
 test("state-changing routes cannot be invoked with GET", async () => {
   const paths = [
