@@ -215,7 +215,11 @@ export const workerEntry = {
     if (url.pathname === "/undo") {
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      if (url.searchParams.get("confirm") === "true") return lockedJson(env, () => rollbackSync(env, url));
+      if (url.searchParams.get("confirm") === "true") {
+        if (req.method !== "POST") return json({ error: "POST required to confirm undo" }, 405);
+        return lockedJson(env, () => rollbackSync(env, url));
+      }
+      if (req.method !== "GET") return json({ error: "GET only for undo preview" }, 405);
       return json(await rollbackSync(env, url));
     }
 
@@ -304,6 +308,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/skip-rules/reset") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.delete("skip_rules");
@@ -339,6 +344,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/sync") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const onlyAccount = await accountParam(env, url);
@@ -360,12 +366,15 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/force-refresh") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await forcePlaidRefresh(env, url.origin));
     }
 
     if (url.pathname === "/backfill-recent") {
+      if (req.method !== "GET" && req.method !== "POST") return json({ error: "GET or POST only" }, 405);
+      if (req.method === "GET" && url.searchParams.get("dryRun") === "false") return json({ error: "POST required for a write-capable backfill" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       // Re-scan: re-check each account's import window for anything missing, without
@@ -380,12 +389,14 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/configure-webhooks") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await configurePlaidWebhooks(env, url.origin));
     }
 
     if (url.pathname === "/bootstrap") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const accountId = url.searchParams.get("account");
@@ -395,12 +406,14 @@ export const workerEntry = {
 
     // Rotate a card's import-id epoch (see resetCardEpoch).
     if (url.pathname === "/reset-card") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return lockedJson(env, () => resetCardEpoch(env, url));
     }
 
     if (url.pathname === "/pause") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.put("sync:enabled", "false");
@@ -408,6 +421,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/resume") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.put("sync:enabled", "true");
@@ -707,16 +721,18 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/item-health") {
+      if (req.method !== "GET" && req.method !== "POST") return json({ error: "GET or POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      const force = req.method === "POST" || url.searchParams.get("force") === "true";
-      const health = await runItemHealthCheck(env, force);
+      // GET is strictly read-only; only an explicit POST may trigger checks/alerts.
+      const health = req.method === "POST" ? await runItemHealthCheck(env, true) : await getItemHealth(env);
       return json({ ok: true, ts: new Date().toISOString(), items: Object.values(health) });
     }
 
     // Send a test alert email so you can confirm the Resend setup works without
     // waiting for a real connection to die. Uses a fake "broken" item.
     if (url.pathname === "/test-alert") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const configured = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
