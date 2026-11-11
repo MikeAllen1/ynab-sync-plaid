@@ -10,7 +10,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
       secret: env.PLAID_SECRET,
       ...body
     })
-  });
+  }, 2, { retrySafe: path !== "/transactions/refresh" });
 
   const data: any = await readJsonBody(resp);
 
