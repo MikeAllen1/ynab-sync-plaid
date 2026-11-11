@@ -18,6 +18,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Dependency vulnerability audit
+        run: npm audit --audit-level=high
       - name: Type check
         run: npm run typecheck
       - name: Tests
