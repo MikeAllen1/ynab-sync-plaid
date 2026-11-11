@@ -1,3 +1,5 @@
+import { escapeHtml as esc } from "../util/html";
+
 // ---------- Dashboard ----------
 
 export function setupHtml(): string {
@@ -68,7 +70,6 @@ async function authenticate() {
   finally { authentication = null; }
 }
 
-function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function setStatus(msg, ok) { var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; }
 async function post(path, body) {
   if (tokenInput.value.trim()) await authenticate();
