@@ -45,15 +45,22 @@ export const NO_FRAMING = { "X-Frame-Options": "DENY", "Content-Security-Policy"
 
 // ---------- Security / utilities ----------
 
+export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
+
 export function requireAdmin(req: Request, env: Env): Response | null {
-  const provided = req.headers.get("x-admin-token");
+  const headerToken = req.headers.get("x-admin-token");
+  const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
+    .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
+  let cookieToken = "";
+  try { cookieToken = cookieValue ? decodeURIComponent(cookieValue) : ""; } catch { cookieToken = ""; }
+  const provided = headerToken || cookieToken;
 
   if (!env.ADMIN_TOKEN) {
     return json({ error: "ADMIN_TOKEN is not configured. Run: npx wrangler secret put ADMIN_TOKEN" }, 500);
   }
 
   if (!provided || !constantTimeEqual(provided, env.ADMIN_TOKEN)) {
-    return json({ error: "unauthorized", note: "Provide x-admin-token header." }, 401);
+    return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
   }
 
   return null;
@@ -76,6 +83,6 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function json(body: any, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "Content-Type": "application/json" }
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
   });
 }

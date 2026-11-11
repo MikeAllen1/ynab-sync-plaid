@@ -8,11 +8,10 @@ import { json } from "../util/http";
 // repair, reset-card, account edits) runs under one global lock, so none of them can
 // act on a register snapshot another run is changing.
 //
-// Preferred: the SyncLock Durable Object (atomic, owner-tokened, renewable). If the
-// DO binding exists but can't be reached, the operation is SKIPPED rather than run
-// unprotected; cron retries in 15 minutes. Without a DO binding at all, a KV lock is
-// used, which is best-effort only (KV get-then-put is not atomic); that mode is
-// reported as lock_mode "kv-best-effort" so it is never mistaken for a real mutex.
+// Required: the SyncLock Durable Object (atomic, owner-tokened, renewable).
+// If the binding is absent or unreachable, the operation is skipped rather than
+// run unprotected; cron retries in 15 minutes. KV get-then-put is not atomic and
+// must never be used as a mutex for financial writes.
 export const SYNC_LOCK_KEY = "sync:lock";
 // Longer than any realistic run (three accounts, capped retries). Runs renew the
 // lease between accounts, so a slow run keeps its lock.
@@ -37,11 +36,10 @@ export async function acquireSyncLock(env: Env): Promise<LockHandle | null> {
       return null; // DO configured but unreachable: do not run unprotected
     }
   }
-  const existing = await env.SYNC_STATE.get(SYNC_LOCK_KEY);
-  if (existing) return null;
-  const id = crypto.randomUUID();
-  await env.SYNC_STATE.put(SYNC_LOCK_KEY, id, { expirationTtl: SYNC_LOCK_TTL_SECONDS });
-  return { id, mode: "kv-best-effort" };
+  // KV get-then-put is not atomic. Treat a missing binding as a configuration
+  // failure instead of allowing concurrent writers to enter the sync engine.
+  lastLockUnreachable = true;
+  return null;
 }
 
 // Leases held by operations running in this isolate. Every outbound Plaid/YNAB call
@@ -74,8 +72,6 @@ export async function renewSyncLock(env: Env, lock: LockHandle): Promise<void> {
     if (lock.mode === "durable-object" && env.SYNC_LOCK) {
       const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName(SYNC_LOCK_DO_ID));
       await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(lock.id)}`, { method: "POST" });
-    } else if (lock.mode === "kv-best-effort" && (await env.SYNC_STATE.get(SYNC_LOCK_KEY)) === lock.id) {
-      await env.SYNC_STATE.put(SYNC_LOCK_KEY, lock.id, { expirationTtl: SYNC_LOCK_TTL_SECONDS });
     }
   } catch { /* the TTL is generous; a missed renewal is not fatal */ }
 }
@@ -88,7 +84,7 @@ export async function releaseSyncLock(env: Env, lock: LockHandle): Promise<void>
     } catch { /* expires on its own */ }
     return;
   }
-  if ((await env.SYNC_STATE.get(SYNC_LOCK_KEY)) === lock.id) await env.SYNC_STATE.delete(SYNC_LOCK_KEY);
+  // Only Durable Object locks can be acquired. No KV fallback is permitted.
 }
 
 // Run a mutating admin operation under the lock; 409 if something else holds it.

@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { NO_FRAMING, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
 
 
@@ -105,13 +105,78 @@ export const workerEntry = {
 
     if (url.pathname === "/dashboard") return dashboardHtml();
 
+    // Exchange the one-time admin token entered by the user for a browser session
+    // held only in a Secure, HttpOnly, SameSite=Strict cookie. The token is never
+    // written to Web Storage or returned to page JavaScript.
+    if (url.pathname === "/session") {
+      const origin = req.headers.get("Origin");
+      if ((req.method === "POST" || req.method === "DELETE") && origin !== url.origin) {
+        return json({ ok: false, error: "same-origin request required" }, 403);
+      }
+      if (req.method === "POST") {
+        if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
+        const supplied = req.headers.get("x-admin-token") || "";
+        if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(env.ADMIN_TOKEN)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+          }
+        });
+      }
+      if (req.method === "GET") {
+        const unauthorized = requireAdmin(req, env);
+        if (unauthorized) return unauthorized;
+        return json({ ok: true });
+      }
+      if (req.method === "DELETE") {
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+          }
+        });
+      }
+      return json({ error: "method not allowed" }, 405);
+    }
+
     if (url.pathname === "/webhook") {
       if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
       // Read the raw body exactly once. We need the unparsed bytes to verify
       // Plaid's signature (it signs a SHA-256 of the raw body), and we reuse the
       // same string for parsing so there's no chance of a mismatch.
-      const rawBody = await req.text();
+      // Plaid signs the exact raw body. Enforce a strict byte limit while
+      // streaming so an oversized unauthenticated request cannot be fully buffered.
+      const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+      const declaredLength = Number(req.headers.get("Content-Length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_WEBHOOK_BODY_BYTES) {
+        return json({ ok: false, error: "webhook payload too large" }, 413);
+      }
+      if (!req.body) return json({ ok: false, error: "webhook body required" }, 400);
+      const reader = req.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          totalBytes += part.value.byteLength;
+          if (totalBytes > MAX_WEBHOOK_BODY_BYTES) {
+            await reader.cancel();
+            return json({ ok: false, error: "webhook payload too large" }, 413);
+          }
+          chunks.push(part.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      const bodyBytes = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) { bodyBytes.set(chunk, offset); offset += chunk.byteLength; }
+      const rawBody = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bodyBytes);
       const verification = req.headers.get("Plaid-Verification");
       const verified = await verifyPlaidWebhook(env, rawBody, verification);
 
@@ -435,7 +500,21 @@ export const workerEntry = {
         const pending = await readJson(env, `pending_link:${body.link_id}`, null);
         if (!pending) return { ok: false, error: "That bank link expired (1 hour). Link the bank again." };
         const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
-        if (!nickname || !body.plaid_account_id || !body.ynab_account_id) return { ok: false, error: "nickname, plaid_account_id and ynab_account_id are required" };
+        const plaidAccountId = String(body.plaid_account_id || "").trim();
+        const ynabAccountId = String(body.ynab_account_id || "").trim();
+        if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(nickname) || !plaidAccountId || !ynabAccountId) {
+          return { ok: false, error: "Provide a valid nickname, Plaid account ID and YNAB account ID." };
+        }
+        if (typeof body.is_credit_card !== "boolean") return { ok: false, error: "is_credit_card must be a boolean." };
+        // Verify the selected Plaid account against the server-side pending Item.
+        const plaidAccounts = await plaidCall(env, "/accounts/get", { access_token: pending.access_token });
+        if (!(plaidAccounts.accounts || []).some((a: any) => a.account_id === plaidAccountId)) {
+          return { ok: false, error: "That Plaid account does not belong to the pending bank link." };
+        }
+        const ynabAccounts = await ynabGetAccounts(env);
+        if (!ynabAccounts.some((a: any) => a.id === ynabAccountId && !a.closed && !a.deleted)) {
+          return { ok: false, error: "Choose an active YNAB account from this budget." };
+        }
         const accounts = await getAccounts(env);
         if (accounts.some(a => a.nickname === nickname)) return { ok: false, error: `An account named ${nickname} already exists` };
         if (accounts.some(a => a.plaid_account_id === body.plaid_account_id)) return { ok: false, error: "That bank account is already mapped" };
@@ -443,8 +522,8 @@ export const workerEntry = {
           nickname,
           institution: String(body.institution || ""),
           plaid_access_token: pending.access_token,
-          plaid_account_id: body.plaid_account_id,
-          ynab_account_id: body.ynab_account_id,
+          plaid_account_id: plaidAccountId,
+          ynab_account_id: ynabAccountId,
           item_id: pending.item_id,
           is_credit_card: !!body.is_credit_card,
           // A card's own last 4 is how checking-side payments usually name it.

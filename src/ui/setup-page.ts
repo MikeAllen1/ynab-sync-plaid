@@ -33,7 +33,7 @@ export function setupHtml(): string {
   <p class="muted"><a href="/dashboard">← Back to the dashboard</a></p>
   <h1>Bank connections</h1>
   <p class="muted">Reconnect a bank that says "Needs reauth", or add a new one. Nothing here changes existing transactions.</p>
-  <p class="muted"><label for="token"><strong>Admin token</strong> (the same one the dashboard uses)</label></p>
+  <p class="muted"><label for="token"><strong>Admin token</strong> (used once to establish a one-hour browser session)</label></p>
   <input id="token" type="password" placeholder="Admin token" autocomplete="off" />
 
   <h2>Reconnect</h2>
@@ -47,19 +47,30 @@ export function setupHtml(): string {
   <div id="status"></div>
 
 <script>
-var TOKEN_KEY = "ynab_sync_admin_token";
 var tokenInput = document.getElementById("token");
-tokenInput.value = localStorage.getItem(TOKEN_KEY) || "";
-tokenInput.addEventListener("change", function () { localStorage.setItem(TOKEN_KEY, tokenInput.value.trim()); loadBanks(); });
+sessionStorage.removeItem("ynab_sync_admin_token");
+tokenInput.addEventListener("change", authenticate);
+async function authenticate() {
+  var value = tokenInput.value.trim();
+  if (!value) return;
+  try {
+    var response = await fetch("/session", { method: "POST", credentials: "same-origin", headers: { "x-admin-token": value } });
+    var data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Authentication failed.");
+    tokenInput.value = "";
+    setStatus("Authenticated. The admin token is held in an HttpOnly cookie, not Web Storage.", true);
+    loadBanks();
+  } catch (e) { setStatus(e.message, false); }
+}
 
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function setStatus(msg, ok) { var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; }
 function post(path, body) {
-  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": (localStorage.getItem(TOKEN_KEY) || "").trim() }, body: JSON.stringify(body || {}) })
+  return fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
     .then(function (r) { return r.json(); });
 }
 function get(path) {
-  return fetch(path, { headers: { "x-admin-token": (localStorage.getItem(TOKEN_KEY) || "").trim() } }).then(function (r) { return r.json(); });
+  return fetch(path, { credentials: "same-origin" }).then(function (r) { return r.json(); });
 }
 
 function openLink(linkToken, receivedRedirectUri, onSuccess) {
@@ -171,7 +182,7 @@ function loadBanks() {
     if (t) openLink(t, location.href, sessionStorage.getItem("link_mode") === "create" ? onLinked : onReconnected);
   }
 })();
-loadBanks();
+get("/session").then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
 </script>
 </body>
 </html>`;

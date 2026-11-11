@@ -50,7 +50,7 @@ export async function health(env: Env): Promise<any> {
       ok: false, health_status: "error", sync_enabled: await isSyncEnabled(env), now: new Date().toISOString(),
       attention_level: "bad", attention: [{ level: "bad", text }], account_statuses: {},
       last_error: { errors: [{ account: "all", friendly_error: text }] }, status: { accounts: [] },
-      lock_mode: env.SYNC_LOCK ? "durable-object" : "kv-best-effort"
+      lock_mode: env.SYNC_LOCK ? "durable-object" : "missing-required-binding"
     };
   }
 }
@@ -86,7 +86,7 @@ export async function healthReport(env: Env): Promise<any> {
   const verdict = accountVerdicts(statusReport.accounts, lastAccountAudit, itemHealth, lastError, lastPartial, env.TIMEZONE || DEFAULT_TIMEZONE);
   const attention: Array<{ level: "bad" | "warn"; text: string }> = [];
   if (!syncEnabled) attention.push({ level: "warn", text: "Global sync is paused (Settings)." });
-  if (!env.SYNC_LOCK) attention.push({ level: "warn", text: "The SYNC_LOCK Durable Object isn't bound in wrangler.toml, so overlapping syncs are only mostly prevented. Add the binding." });
+  if (!env.SYNC_LOCK) attention.push({ level: "bad", text: "The SYNC_LOCK Durable Object isn't bound. Financial writes are disabled until the atomic lock binding is configured." });
   for (const e of (lastError?.errors || [])) attention.push({ level: "bad", text: `${prettyNickname(e.account)}: sync failed. ${e.friendly_error || e.error}` });
   attention.push(...verdict.attention);
   if (lastAccountAuditError) attention.push({ level: "warn", text: `The last health check failed (${lastAccountAuditError.error}). The figures shown are from ${lastAccountAudit?.ts ? "the check at " + lastAccountAudit.ts : "an earlier check"}.` });
@@ -139,7 +139,7 @@ export async function healthReport(env: Env): Promise<any> {
     last_alert_failure: lastAlertFailure,
     // "durable-object" is a real mutex. "kv-best-effort" means the SYNC_LOCK binding
     // is missing from wrangler.toml and overlapping runs are only mostly prevented.
-    lock_mode: env.SYNC_LOCK ? "durable-object" : "kv-best-effort",
+    lock_mode: env.SYNC_LOCK ? "durable-object" : "missing-required-binding",
     worker_version: WORKER_VERSION,
     status: statusReport
   };

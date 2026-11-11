@@ -210,30 +210,45 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
 
 export async function appendWebhookHistory(env: Env, event: any): Promise<void> {
   const key = "webhook_history";
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for atomic webhook history writes");
+  // Seed old KV history on first append; the DO transaction ensures only one
+  // concurrent writer initializes the durable history.
   const raw = await env.SYNC_STATE.get(key);
-  let existing: any[] = [];
-
+  let initial: any[] = [];
   if (raw) {
     try {
-      existing = JSON.parse(raw);
-    } catch {
-      existing = [];
-    }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) initial = parsed.slice(0, 20);
+    } catch { /* malformed legacy history is ignored */ }
   }
-
-  await env.SYNC_STATE.put(key, JSON.stringify([event, ...existing].slice(0, 20)));
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/history/append", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, items: [event], initial })
+  });
+  if (!response.ok) throw new Error(`Atomic webhook history append failed (${response.status})`);
 }
 
 export async function getWebhookHistory(env: Env): Promise<any[]> {
+  if (env.SYNC_LOCK) {
+    try {
+      const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+      const response = await stub.fetch("https://sync-lock/history/get?key=webhook_history");
+      if (response.ok) {
+        const data: any = await response.json();
+        if (Array.isArray(data.items)) return data.items;
+      }
+    } catch {
+      // Keep the dashboard readable if the DO is temporarily unavailable.
+    }
+  }
   const raw = await env.SYNC_STATE.get("webhook_history");
   if (!raw) return [];
-
   try {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 export function uniqueAccessTokens(accounts: AccountConfig[]): string[] {

@@ -278,12 +278,10 @@ export function dashboardHtml(): Response {
 </main>
 
 <script>
-var TOKEN_KEY = "ynab_sync_admin_token";
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
 
 function $(id) { return document.getElementById(id); }
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-function token() { return localStorage.getItem(TOKEN_KEY) || ""; }
 function dry() { return $("dryRun").checked; }
 function selected() { return $("accountSelect").value; }
 function pretty(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
@@ -298,8 +296,7 @@ function ago(iso) {
 }
 
 async function api(path, opts, raw) {
-  if (!token()) throw new Error("No admin token saved. Add it under Settings.");
-  var resp = await fetch(path, Object.assign({}, opts || {}, { headers: { "x-admin-token": token(), "Content-Type": "application/json" } }));
+  var resp = await fetch(path, Object.assign({}, opts || {}, { credentials: "same-origin", headers: Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {}) }));
   var text = await resp.text();
   var data; try { data = JSON.parse(text); } catch (e) { data = text; }
   // Raw output only shows what you asked to see (Recovery actions and your own
@@ -868,8 +865,21 @@ async function toggleGlobal() {
   if (on && !confirm("Pause all syncing? Nothing imports until you resume.")) return;
   try { await api(on ? "/pause" : "/resume"); await refreshGlobal(); loadAll(); } catch (e) { attention([e.message], "bad"); }
 }
-function saveToken() { var v = $("token").value.trim(); if (!v) return; localStorage.setItem(TOKEN_KEY, v); $("token").value = ""; loadAll(); }
-function clearToken() { localStorage.removeItem(TOKEN_KEY); setOverall("No token", ""); attention(["Admin token cleared from this browser."], "ok"); }
+async function saveToken() {
+  var v = $("token").value.trim(); if (!v) return;
+  try {
+    var resp = await fetch("/session", { method: "POST", credentials: "same-origin", headers: { "x-admin-token": v } });
+    var data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "Authentication failed.");
+    $("token").value = "";
+    await loadAll(); loadItems(false);
+    attention(["Authenticated. The admin token is held in an HttpOnly browser cookie, not Web Storage."], "ok");
+  } catch (e) { attention([e.message], "bad"); }
+}
+async function clearToken() {
+  await fetch("/session", { method: "DELETE", credentials: "same-origin" });
+  setOverall("No token", ""); attention(["Admin browser session cleared."], "ok");
+}
 
 async function loadItems(force) {
   try {
@@ -933,17 +943,30 @@ async function saveAccounts() {
 }
 
 // ---------- Start ----------
-(function init() {
+(async function init() {
+  // Remove credentials saved by older releases; this build uses HttpOnly cookies.
+  sessionStorage.removeItem("ynab_sync_admin_token");
+  var hashToken = "";
   if (location.hash.indexOf("token=") >= 0) {
-    var t = new URLSearchParams(location.hash.slice(1)).get("token");
-    if (t) localStorage.setItem(TOKEN_KEY, t);
+    hashToken = new URLSearchParams(location.hash.slice(1)).get("token") || "";
     history.replaceState(null, "", location.pathname);
   }
   $("accountSelect").addEventListener("change", function () { loadEvents(); $("traceOut").innerHTML = ""; });
   updateDryNote();
-  if (!token()) { setOverall("No token", ""); attention(["Add your admin token under Settings."], "warn"); openTab("settings"); return; }
-  loadAll();
-  loadItems(false);
+  if (hashToken) {
+    $("token").value = hashToken;
+    await saveToken();
+    return;
+  }
+  try {
+    await api("/session", undefined, false);
+    loadAll();
+    loadItems(false);
+  } catch (e) {
+    setOverall("No token", "");
+    attention(["Add your admin token under Settings."], "warn");
+    openTab("settings");
+  }
 })();
 </script>
 </body>
