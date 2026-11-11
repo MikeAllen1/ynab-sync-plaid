@@ -30,6 +30,55 @@ export function defaultSettingForAccount(nickname: string): AccountAutomationSet
 export const ACCOUNT_MAP_KV_KEY = "account_map";
 export const CONFIG_UNREADABLE = "CONFIG_UNREADABLE";
 
+function validateAccountMap(value: any, source: string): AccountConfig[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${CONFIG_UNREADABLE}: ${source} must be an array of account objects.`);
+  }
+  const nicknames = new Set<string>();
+  const plaidIds = new Set<string>();
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${CONFIG_UNREADABLE}: ${source} entry ${index + 1} is not an account object.`);
+    }
+    const nickname = String(item.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
+    const plaidToken = typeof item.plaid_access_token === "string" ? item.plaid_access_token.trim() : "";
+    const plaidId = typeof item.plaid_account_id === "string" ? item.plaid_account_id.trim() : "";
+    const ynabId = typeof item.ynab_account_id === "string" ? item.ynab_account_id.trim() : "";
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(nickname) || !plaidToken || !plaidId || !ynabId) {
+      throw new Error(`${CONFIG_UNREADABLE}: ${source} entry ${index + 1} is missing a valid nickname, Plaid token, Plaid account ID, or YNAB account ID.`);
+    }
+    if (nicknames.has(nickname)) {
+      throw new Error(`${CONFIG_UNREADABLE}: ${source} contains duplicate account nickname '${nickname}'.`);
+    }
+    if (plaidIds.has(plaidId)) {
+      throw new Error(`${CONFIG_UNREADABLE}: ${source} maps Plaid account '${plaidId}' more than once.`);
+    }
+    if (item.is_credit_card !== undefined && typeof item.is_credit_card !== "boolean") {
+      throw new Error(`${CONFIG_UNREADABLE}: is_credit_card for '${nickname}' must be a boolean.`);
+    }
+    if (item.institution !== undefined && typeof item.institution !== "string") {
+      throw new Error(`${CONFIG_UNREADABLE}: institution for '${nickname}' must be a string.`);
+    }
+    if (item.item_id !== undefined && typeof item.item_id !== "string") {
+      throw new Error(`${CONFIG_UNREADABLE}: item_id for '${nickname}' must be a string.`);
+    }
+    const paymentMatch = item.payment_match === undefined ? undefined : cleanPaymentMatch(item.payment_match);
+    if (item.payment_match !== undefined && !paymentMatch) {
+      throw new Error(`${CONFIG_UNREADABLE}: payment_match for '${nickname}' is invalid.`);
+    }
+    nicknames.add(nickname);
+    plaidIds.add(plaidId);
+    return {
+      ...item,
+      nickname,
+      plaid_access_token: plaidToken,
+      plaid_account_id: plaidId,
+      ynab_account_id: ynabId,
+      payment_match: paymentMatch
+    } as AccountConfig;
+  });
+}
+
 export async function getAccounts(env: Env): Promise<AccountConfig[]> {
   try {
     const raw = await env.SYNC_STATE.get(ACCOUNT_MAP_KV_KEY);
@@ -38,7 +87,7 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
     if (raw !== null) {
       let parsed: any = undefined;
       try { parsed = JSON.parse(raw); } catch { /* handled below */ }
-      if (Array.isArray(parsed)) return parsed as AccountConfig[];
+      if (Array.isArray(parsed)) return validateAccountMap(parsed, 'saved account map (KV "account_map")');
       // Present but unreadable: stop, rather than quietly running on the env seed.
       throw new Error(`${CONFIG_UNREADABLE}: the saved account list (KV "account_map") can't be read. Nothing was synced. Re-save your accounts in Settings, or restore account_map.`);
     }
@@ -50,9 +99,9 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
   }
   try {
     const seed = JSON.parse(env.ACCOUNT_MAP || "[]");
-    return Array.isArray(seed) ? seed as AccountConfig[] : [];
+    return validateAccountMap(seed, "ACCOUNT_MAP environment seed");
   } catch {
-    return [];
+    throw new Error(`${CONFIG_UNREADABLE}: ACCOUNT_MAP environment seed contains invalid JSON. Correct the account configuration before syncing.`);
   }
 }
 
