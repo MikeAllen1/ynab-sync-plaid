@@ -1,0 +1,19 @@
+{
+  "name": "ynab-sync",
+  "version": "1.0.0",
+  "description": "Import bank activity from Plaid into YNAB on a free Cloudflare Worker: pending charges early, posted charges exactly once.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260524.1",
+    "typescript": "^5.3.0",
+    "wrangler": "^3.78.0"
+  }
+}

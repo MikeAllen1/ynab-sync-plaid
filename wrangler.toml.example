@@ -1,0 +1,42 @@
+# Copy to wrangler.toml and fill in the two PASTE_ values. wrangler.toml is git-ignored,
+# so your IDs stay out of the repo.
+name = "ynab-sync"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+# Cron: every 15 minutes (each account still syncs on its own interval, set on the dashboard).
+[triggers]
+crons = ["*/15 * * * *"]
+
+# KV namespace for cursors, settings and logs.
+# Create it with: npx wrangler kv namespace create SYNC_STATE
+[[kv_namespaces]]
+binding = "SYNC_STATE"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+# Durable Object: the sync lock (one writer at a time). Works on the free plan.
+[[durable_objects.bindings]]
+name = "SYNC_LOCK"
+class_name = "SyncLock"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SyncLock"]
+
+[vars]
+PLAID_ENV = "production"            # or "sandbox" to try it with Plaid's test banks
+YNAB_BUDGET_ID = "PASTE_YNAB_BUDGET_ID_HERE"
+TIMEZONE = "America/New_York"       # your IANA time zone, for day boundaries
+# CC_TRANSFER_CUTOFF = "2026-01-01" # optional: card payments before this stay in the card's starting balance
+# WORKER_ORIGIN = "https://ynab-sync.<you>.workers.dev"   # optional: links in alert emails
+
+# Secrets (never in this file):
+#   npx wrangler secret put PLAID_CLIENT_ID
+#   npx wrangler secret put PLAID_SECRET
+#   npx wrangler secret put YNAB_TOKEN
+#   npx wrangler secret put ADMIN_TOKEN        # any long random string; the dashboard asks for it
+# Optional email alerts (https://resend.com):
+#   npx wrangler secret put RESEND_API_KEY
+#   npx wrangler secret put ALERT_EMAIL_TO
+# Optional JSON webhook alerts:
+#   npx wrangler secret put ALERT_WEBHOOK_URL
