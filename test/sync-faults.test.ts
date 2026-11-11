@@ -19,6 +19,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
   const ynabRows: any[] = [];
   let failAfterCommit = true;
   let failCursorCommit = false;
+  let malformedSyncPage = false;
   const originalFetch = globalThis.fetch;
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
@@ -46,6 +47,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     if (url.hostname === "production.plaid.com") {
       const body = JSON.parse(String(init?.body || "{}"));
       if (url.pathname === "/transactions/sync") {
+        if (malformedSyncPage) return Response.json({ added: [], modified: [], removed: [], next_cursor: "cursor-bad", has_more: "false" });
         const second = body.cursor === "cursor-next";
         return Response.json({
           added: [{
@@ -135,7 +137,16 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     const cursorRecovered = await syncAccountEngine(env, account, [], { trigger: "cursor-recovery", runId: "run-fault-4" });
     assert.equal(cursorRecovered.status, "ok");
     assert.equal(values.get("cursor:plaid-checking"), "cursor-third");
+
     assert.equal(ynabRows.length, 2, "replaying after cursor persistence failure must not duplicate the row");
+
+    malformedSyncPage = true;
+    resetRunCache();
+    await assert.rejects(
+      syncAccountEngine(env, account, [], { trigger: "malformed-page", runId: "run-fault-5" }),
+      /Plaid \/transactions\/sync returned an invalid page/
+    );
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "malformed pagination metadata must never advance the saved cursor");
   } finally {
     globalThis.fetch = originalFetch;
     resetRunCache();
