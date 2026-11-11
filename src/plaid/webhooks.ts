@@ -2,7 +2,7 @@ import { runItemHealthCheck } from "../health/items";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "./client";
 import { getEnabledAccounts } from "../store/accounts";
-import { syncAll } from "../sync/run";
+import { markItemDue, syncAll } from "../sync/run";
 import { AccountConfig, Env } from "../types";
 import { friendlyErrorMessage } from "../util/errors";
 import { constantTimeEqual } from "../util/http";
@@ -182,9 +182,35 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     // passing the item through, the cron tick that asked Plaid to refresh a minute
     // earlier has just stamped the account as synced, the frequency gate says "not
     // due", and the data waits a full interval.
-    const webhookItemId = body.webhook_code === "SYNC_UPDATES_AVAILABLE" && body.item_id ? String(body.item_id) : undefined;
-    ctx.waitUntil(syncAll(env, { trigger: `webhook:${body.webhook_code}`, webhookItemId }));
-    return { ok: true, action: "sync_started", event };
+    const webhookItemId = body.item_id ? String(body.item_id) : undefined;
+    // Webhook delivery is only a trigger, not a durable job queue. Cloudflare may
+    // terminate waitUntil work; the scheduled full sync is the recovery backstop.
+    // Record failures and make this item due so the next cron run does not suppress
+    // recovery behind the normal per-account frequency gate.
+    ctx.waitUntil((async () => {
+      try {
+        const result = await syncAll(env, { trigger: `webhook:${body.webhook_code}`, webhookItemId });
+        if (result?.status === "completed_with_errors" || result?.status === "completed_partial" ||
+            result?.status === "lock_unavailable") {
+          if (webhookItemId) await markItemDue(env, webhookItemId);
+          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+            ts: new Date().toISOString(), webhook_code: body.webhook_code,
+            item_id: webhookItemId || null, status: result.status
+          }));
+        } else if (result?.status === "completed") {
+          await env.SYNC_STATE.delete("last_webhook_sync_failure");
+        }
+      } catch (error: any) {
+        try {
+          if (webhookItemId) await markItemDue(env, webhookItemId);
+          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+            ts: new Date().toISOString(), webhook_code: body.webhook_code,
+            item_id: webhookItemId || null, error: friendlyErrorMessage(error)
+          }));
+        } catch { /* cron's full sync remains the final recovery path */ }
+      }
+    })());
+    return { ok: true, action: "sync_scheduled", event };
   }
 
   // Connection problems (ERROR, PENDING_EXPIRATION, LOGIN_REPAIRED...) re-check
