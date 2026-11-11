@@ -10,6 +10,7 @@ const env = { ADMIN_TOKEN: "admin-test-token" } as Env;
 test("state-changing routes cannot be invoked with GET", async () => {
   const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
   const paths = [
+    "/audit/accounts",
     "/sync",
     "/force-refresh",
     "/configure-webhooks",

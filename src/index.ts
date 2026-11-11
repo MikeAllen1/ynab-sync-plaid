@@ -207,6 +207,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/audit/accounts") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await auditAccounts(env, url));

@@ -612,7 +612,7 @@ async function recheck(btn) {
     try {
       await loadItems(false);
       var q = selected() ? "?account=" + encodeURIComponent(selected()) : "";
-      var audit = await api("/audit/accounts" + q);
+      var audit = await api("/audit/accounts" + q, { method: "POST" });
       // The server stores a one-account check into the saved result, so reloading
       // shows the fresh answer rather than the older one.
       await loadAll();
