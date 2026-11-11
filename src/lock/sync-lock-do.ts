@@ -27,10 +27,21 @@ export class SyncLock {
       const fingerprint = String(body?.fingerprint || "");
       if (!/^[a-f0-9]{64}$/.test(fingerprint)) return Response.json({ error: "invalid fingerprint" }, { status: 400 });
       const claimed = await this.state.storage.transaction(async txn => {
-        const key = `webhook:seen:${fingerprint}`;
-        const previous = await txn.get<number>(key);
-        if (typeof previous === "number" && now - previous < 600000) return false;
-        await txn.put(key, now);
+        const key = "webhook:seen";
+        const stored = await txn.get<Record<string, number>>(key);
+        const seen = stored && typeof stored === "object" ? stored : {};
+        for (const [hash, at] of Object.entries(seen)) {
+          if (typeof at !== "number" || now - at >= 600000) delete seen[hash];
+        }
+        if (seen[fingerprint]) {
+          await txn.put(key, seen);
+          return false;
+        }
+        // Bound durable storage even during sustained webhook floods.
+        const entries = Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 999);
+        const bounded = Object.fromEntries(entries);
+        bounded[fingerprint] = now;
+        await txn.put(key, bounded);
         return true;
       });
       return Response.json({ claimed });
