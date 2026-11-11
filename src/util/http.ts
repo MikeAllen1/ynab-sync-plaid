@@ -20,15 +20,21 @@ export async function fetchWithRetry(
     if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
       const header = resp.headers.get("Retry-After");
       let requestedMs = 0;
-      if (header) {
+      let validRetryAfter = false;
+      if (header !== null) {
         const seconds = Number(header);
-        if (Number.isFinite(seconds) && seconds >= 0) requestedMs = seconds * 1000;
-        else {
+        if (header.trim() !== "" && Number.isFinite(seconds) && seconds >= 0) {
+          requestedMs = seconds * 1000;
+          validRetryAfter = true;
+        } else {
           const date = Date.parse(header);
-          if (Number.isFinite(date)) requestedMs = Math.max(0, date - Date.now());
+          if (Number.isFinite(date)) {
+            requestedMs = Math.max(0, date - Date.now());
+            validRetryAfter = true;
+          }
         }
       }
-      const backoffMs = header
+      const backoffMs = validRetryAfter
         ? requestedMs
         : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
       // Do not shorten the provider's requested delay. Defer to the next scheduled
