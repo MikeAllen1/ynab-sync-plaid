@@ -47,8 +47,7 @@ export const NO_FRAMING = { "X-Frame-Options": "DENY", "Content-Security-Policy"
 
 export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
 
-export async function createAdminSessionValue(adminToken: string): Promise<string> {
-  const issuedAt = Math.floor(Date.now() / 1000);
+export async function createAdminSessionValue(adminToken: string, issuedAt = Math.floor(Date.now() / 1000)): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(adminToken),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
