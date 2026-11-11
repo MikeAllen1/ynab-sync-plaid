@@ -2,6 +2,8 @@ import { NO_FRAMING } from "../util/http";
 import { escapeHtml as esc, safeCssClass } from "../util/html";
 
 export function dashboardHtml(): Response {
+  const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
+  const nonce = btoa(String.fromCharCode(...nonceBytes));
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -972,7 +974,12 @@ async function saveAccounts() {
 </body>
 </html>`;
 
-  return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING }
+  const securedHtml = html.replace(/<script(?![^>]*\\bnonce=)/gi, '<script nonce="' + nonce + '"')
+    .replace(/<style(?![^>]*\\bnonce=)/gi, '<style nonce="' + nonce + '"');
+  return new Response(securedHtml, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
+      "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "'; script-src-attr 'unsafe-inline'; style-src 'self' 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; font-src 'self' data:"
+    }
   });
 }
