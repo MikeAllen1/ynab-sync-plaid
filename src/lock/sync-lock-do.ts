@@ -20,6 +20,22 @@ export class SyncLock {
     const now = Date.now();
     const ttlMs = SYNC_LOCK_TTL_SECONDS * 1000;
 
+
+    if (url.pathname === "/webhook/claim" && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch { return Response.json({ error: "invalid claim" }, { status: 400 }); }
+      const fingerprint = String(body?.fingerprint || "");
+      if (!/^[a-f0-9]{64}$/.test(fingerprint)) return Response.json({ error: "invalid fingerprint" }, { status: 400 });
+      const claimed = await this.state.storage.transaction(async txn => {
+        const key = `webhook:seen:${fingerprint}`;
+        const previous = await txn.get<number>(key);
+        if (typeof previous === "number" && now - previous < 600000) return false;
+        await txn.put(key, now);
+        return true;
+      });
+      return Response.json({ claimed });
+    }
+
     if (url.pathname === "/history/append" && request.method === "POST") {
       let body: any;
       try {
