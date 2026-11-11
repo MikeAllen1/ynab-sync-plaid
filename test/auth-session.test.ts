@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { workerEntry } from "../src/index";
+import { createAdminSessionValue } from "../src/util/http";
 import type { Env } from "../src/types";
 
 function makeEnv() {
@@ -21,14 +22,16 @@ test("admin session exchanges header token for a short-lived HttpOnly cookie", a
   assert.match(cookie, /Secure/);
   assert.match(cookie, /SameSite=Strict/);
   assert.match(cookie, /Max-Age=3600/);
-  assert.equal(cookie.includes(env.ADMIN_TOKEN), true);
+  assert.equal(cookie.includes(env.ADMIN_TOKEN), false, "raw admin token must not be placed in the cookie");
+  assert.match(decodeURIComponent(cookie.split(";")[0].split("=")[1]), /^v1\.\d+\.[a-f0-9]{64}$/);
 });
 
-test("HttpOnly session cookie authenticates requests without a JavaScript-readable token", async () => {
+test("signed HttpOnly session cookie authenticates without exposing the admin token", async () => {
   const env = makeEnv();
+  const value = await createAdminSessionValue(env.ADMIN_TOKEN);
   const response = await workerEntry.routeFetch(new Request("https://worker.example/session", {
     method: "GET",
-    headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(env.ADMIN_TOKEN)}` }
+    headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(value)}` }
   }), env, ctx);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
@@ -54,4 +57,20 @@ test("logout expires the HttpOnly session cookie", async () => {
   }), makeEnv(), ctx);
   assert.equal(response.status, 200);
   assert.match(response.headers.get("Set-Cookie") || "", /Max-Age=0/);
+});
+
+test("expired, future-dated, and tampered admin session cookies are rejected", async () => {
+  const env = makeEnv();
+  const now = Math.floor(Date.now() / 1000);
+  const expired = await createAdminSessionValue(env.ADMIN_TOKEN, now - 3601);
+  const future = await createAdminSessionValue(env.ADMIN_TOKEN, now + 60);
+  const valid = await createAdminSessionValue(env.ADMIN_TOKEN, now);
+  const tampered = valid.replace(/.$/, valid.endsWith("0") ? "1" : "0");
+  for (const value of [expired, future, tampered]) {
+    const response = await workerEntry.routeFetch(new Request("https://worker.example/session", {
+      method: "GET",
+      headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(value)}` }
+    }), env, ctx);
+    assert.equal(response.status, 401);
+  }
 });

@@ -585,7 +585,7 @@ async function runSync(btn) {
   await busy(btn, async function () {
     try {
       if (dry()) { renderPreview(await api("/dry-run" + acctQuery("?"))); flash(["Dry run: the preview below shows what a live sync would do. Nothing was changed."], "ok"); return; }
-      var d = await api("/sync" + acctQuery("?"));
+      var d = await api("/sync" + acctQuery("?"), { method: "POST" });
       $("previewBlock").style.display = "none";
       await loadAll();
       var s = summarizeRun(d, "Sync of " + (selected() ? pretty(selected()) : "all accounts"));
@@ -597,7 +597,7 @@ async function rescan(btn) {
   flash([]);
   await busy(btn, async function () {
     try {
-      var d = await api("/backfill-recent?days=" + encodeURIComponent($("rescanDays").value) + "&dryRun=" + (dry() ? "true" : "false") + acctQuery("&"));
+      var d = await api("/backfill-recent?days=" + encodeURIComponent($("rescanDays").value) + "&dryRun=" + (dry() ? "true" : "false") + acctQuery("&"), { method: "POST" });
       if (dry()) { renderPreview(d); flash(["Dry run: the preview below shows what a live Re-scan would do. Nothing was changed."], "ok"); return; }
       await loadAll();
       var s = summarizeRun(d, "Re-scan (" + $("rescanDays").value + " days)");
@@ -634,7 +634,7 @@ async function undo(btn) {
       if (!preview.target) { flash([preview.error || "No such sync."], "bad"); return; }
       if (!confirm(preview.message)) return;
       // Confirm by the previewed run's timestamp, never by list position.
-      var r = await api("/undo?ts=" + encodeURIComponent(preview.target.ts) + "&confirm=true");
+      var r = await api("/undo?ts=" + encodeURIComponent(preview.target.ts) + "&confirm=true", { method: "POST" });
       if (r.ok === false && !r.undone) { flash([r.error], "bad"); return; }
       await loadAll();
       flash(["Undo removed " + r.deleted + " row(s)" + (r.kept && r.kept.length ? "; kept " + r.kept.length + " that have settled or are gone" : "") + "." + (r.errors && r.errors.length ? " " + r.errors.length + " couldn't be removed; they stay in the undo list so you can try again." : "")], r.errors && r.errors.length ? "bad" : "ok");
