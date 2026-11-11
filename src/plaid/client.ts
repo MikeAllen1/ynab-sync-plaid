@@ -10,7 +10,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
       secret: env.PLAID_SECRET,
       ...body
     })
-  }, 2, { retrySafe: path !== "/transactions/refresh" });
+  }, 2, { retrySafe: ["/transactions/sync", "/transactions/get", "/accounts/get", "/accounts/balance/get", "/item/get", "/webhook_verification_key/get"].includes(path) });
 
   const data: any = await readJsonBody(resp);
 
