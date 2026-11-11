@@ -944,6 +944,8 @@ async function saveAccounts() {
 
 // ---------- Start ----------
 (async function init() {
+  // Remove credentials saved by older releases; this build uses HttpOnly cookies.
+  sessionStorage.removeItem("ynab_sync_admin_token");
   var hashToken = "";
   if (location.hash.indexOf("token=") >= 0) {
     hashToken = new URLSearchParams(location.hash.slice(1)).get("token") || "";
