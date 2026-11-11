@@ -45,7 +45,19 @@ export class SyncLock {
         const existing = Array.isArray(stored)
           ? stored
           : (Array.isArray(body.initial) ? body.initial : []);
-        const merged = [...body.items, ...existing].slice(0, limit);
+        let merged: any[];
+        if (key === "undo_log") {
+          merged = Array.isArray(existing) ? [...existing] : [];
+          for (const incoming of body.items) {
+            const at = incoming?.run_id ? merged.findIndex((entry: any) => entry?.run_id === incoming.run_id) : -1;
+            if (at >= 0) {
+              const prior = merged[at];
+              merged[at] = { ...prior, items: [...(Array.isArray(prior.items) ? prior.items : []), ...(Array.isArray(incoming.items) ? incoming.items : [])] };
+              merged[at].count = merged[at].items.length;
+            } else merged.unshift(incoming);
+          }
+          merged = merged.slice(0, limit);
+        } else merged = [...body.items, ...existing].slice(0, limit);
         await txn.put(`history:${key}`, merged);
         return merged.length;
       });
