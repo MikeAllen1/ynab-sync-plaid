@@ -4,7 +4,31 @@ import { workerEntry } from "../src/index";
 import type { Env } from "../src/types";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-const cookie = "__Host-ynab_admin=admin-test-token";
+const env = { ADMIN_TOKEN: "admin-test-token" } as Env;
+const cookie = "__Host-ynab_admin=v1.1799999999.admin-test-token";
+
+test("state-changing routes cannot be invoked with GET", async () => {
+  const paths = [
+    "/sync",
+    "/force-refresh",
+    "/configure-webhooks",
+    "/bootstrap?account=checking",
+    "/reset-card?account=checking",
+    "/pause",
+    "/resume",
+    "/test-alert",
+    "/skip-rules/reset",
+    "/undo?confirm=true",
+    "/backfill-recent?dryRun=false"
+  ];
+  for (const path of paths) {
+    const response = await workerEntry.routeFetch(new Request("https://worker.example" + path, {
+      method: "GET",
+      headers: { Cookie: cookie }
+    }), env, ctx);
+    assert.equal(response.status, 405, path + " must reject GET");
+  }
+});
 
 test("cookie-authenticated state changes reject cross-origin POST requests", async () => {
   const response = await workerEntry.routeFetch(new Request("https://worker.example/skip-rules", {
@@ -15,7 +39,7 @@ test("cookie-authenticated state changes reject cross-origin POST requests", asy
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ rules: [] })
-  }), { ADMIN_TOKEN: "admin-test-token" } as Env, ctx);
+  }), env, ctx);
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { ok: false, error: "same-origin request required" });
 });
@@ -24,13 +48,11 @@ test("cookie-authenticated state changes reject requests without an Origin heade
   const response = await workerEntry.routeFetch(new Request("https://worker.example/skip-rules/reset", {
     method: "POST",
     headers: { Cookie: cookie }
-  }), { ADMIN_TOKEN: "admin-test-token" } as Env, ctx);
+  }), env, ctx);
   assert.equal(response.status, 403);
 });
 
 test("Plaid's signed webhook route remains exempt from browser Origin checks", async () => {
-  // Missing Plaid signature is rejected by webhook verification, not by the
-  // browser-origin guard. This keeps server-to-server Plaid delivery working.
   const response = await workerEntry.routeFetch(new Request("https://worker.example/webhook", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
