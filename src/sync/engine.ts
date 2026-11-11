@@ -652,10 +652,17 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   if (bootstrapDate > importStart) importStart = bootstrapDate;
   try {
     const w = await getRecentRawTransactionsDetailed(env, acct, Math.max(windowDays, VERIFY_WINDOW_DAYS), 500);
-    windowTxns = w.transactions.filter(t => t.account_id === pid);
     windowStart = w.start_date;
     windowOk = !w.truncated;
-    if (w.truncated) windowNote = `verification window truncated at ${w.transactions.length} transactions; pending retirement paused`;
+    if (w.truncated) {
+      // A partial snapshot is not evidence of absence and must not participate in
+      // ownership, matching, or imports. Cursor deltas remain usable; the snapshot-
+      // dependent retirement/verification path stays disabled for this run.
+      windowTxns = [];
+      windowNote = `verification window exceeded its safe pagination budget; partial results discarded and pending retirement paused`;
+    } else {
+      windowTxns = w.transactions.filter(t => t.account_id === pid);
+    }
   } catch (e: any) {
     windowNote = `verification window unavailable (${friendlyErrorMessage(e)}); pending retirement paused`;
   }
