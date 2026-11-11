@@ -94,7 +94,16 @@ export const workerEntry = {
     })());
 
     // Direct sync of whatever Plaid already has. The backstop if a webhook is late.
-    ctx.waitUntil(syncAll(env, { trigger: "cron" }));
+    ctx.waitUntil(syncAll(env, { trigger: "cron" }).catch(async (error: any) => {
+      // A thrown error outside the per-account result handling (for example a
+      // persistence or lock-service failure) must be visible to the dashboard.
+      try {
+        await env.SYNC_STATE.put("last_error", JSON.stringify({
+          ts: new Date().toISOString(),
+          errors: [{ account: "all", status: "error", error: String(error?.message || error), friendly_error: friendlyErrorMessage(error) }]
+        }));
+      } catch { /* the scheduled invocation still completes; next cron retries */ }
+    }));
     // Item health self-throttles (every ~6h), so calling it each tick is cheap.
     ctx.waitUntil(runItemHealthCheck(env).catch(() => {}));
   },
