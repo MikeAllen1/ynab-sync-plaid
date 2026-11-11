@@ -191,7 +191,10 @@ export const workerEntry = {
         return json({ ok: false, error: "webhook verification failed" }, 401);
       }
 
-      const firstDelivery = await claimPlaidWebhook(env, rawBody);\n      if (!firstDelivery) return json({ ok: true, duplicate: true, action: "already_processed" });\n\n      const result = await handlePlaidWebhook(rawBody, env, ctx);
+      const firstDelivery = await claimPlaidWebhook(env, rawBody);
+      if (!firstDelivery) return json({ ok: true, duplicate: true, action: "already_processed" });
+
+      const result = await handlePlaidWebhook(rawBody, env, ctx);
       return json(result);
     }
 
