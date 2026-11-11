@@ -58,25 +58,35 @@ export class SyncLock {
       return Response.json({ items: Array.isArray(stored) ? stored : null });
     }
 
-    const held = await this.state.storage.get<{ id: string; at: number }>("lock");
-    const live = !!held && now - held.at <= ttlMs;
-
     if (url.pathname === "/acquire" && request.method === "POST") {
-      if (live) return Response.json({ acquired: false, held_since: held!.at });
-      const id = crypto.randomUUID();
-      await this.state.storage.put("lock", { id, at: now });
-      return Response.json({ acquired: true, id, stole_expired: !!held });
+      const result = await this.state.storage.transaction(async txn => {
+        const held = await txn.get<{ id: string; at: number }>("lock");
+        const live = !!held && now - held.at <= ttlMs;
+        if (live) return { acquired: false, held_since: held!.at };
+        const id = crypto.randomUUID();
+        await txn.put("lock", { id, at: now });
+        return { acquired: true, id, stole_expired: !!held };
+      });
+      return Response.json(result);
     }
     const id = url.searchParams.get("id") || "";
     if (url.pathname === "/renew" && request.method === "POST") {
-      if (!held || held.id !== id) return Response.json({ renewed: false });
-      await this.state.storage.put("lock", { id, at: now });
-      return Response.json({ renewed: true });
+      const renewed = await this.state.storage.transaction(async txn => {
+        const held = await txn.get<{ id: string; at: number }>("lock");
+        if (!held || held.id !== id) return false;
+        await txn.put("lock", { id, at: now });
+        return true;
+      });
+      return Response.json({ renewed });
     }
     if (url.pathname === "/release" && request.method === "POST") {
-      if (!held || held.id !== id) return Response.json({ released: false });
-      await this.state.storage.delete("lock");
-      return Response.json({ released: true });
+      const released = await this.state.storage.transaction(async txn => {
+        const held = await txn.get<{ id: string; at: number }>("lock");
+        if (!held || held.id !== id) return false;
+        await txn.delete("lock");
+        return true;
+      });
+      return Response.json({ released });
     }
     return new Response("not found", { status: 404 });
   }
