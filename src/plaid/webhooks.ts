@@ -241,6 +241,9 @@ export function uniqueAccessTokens(accounts: AccountConfig[]): string[] {
 }
 
 export async function forcePlaidRefresh(env: Env, origin: string, onlyTokens?: string[]): Promise<any> {
+  // /transactions/refresh is billed per call on paid Plaid plans. PLAID_REFRESH = "off"
+  // turns it off: new activity then arrives on Plaid's own schedule (a few times a day).
+  if (String(env.PLAID_REFRESH || "").toLowerCase() === "off") return { ok: true, skipped: "PLAID_REFRESH is off", origin };
   const accounts = await getEnabledAccounts(env);
   const tokens = onlyTokens || uniqueAccessTokens(accounts);
   const results: any[] = [];

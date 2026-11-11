@@ -26,6 +26,9 @@ export interface Env {
   // Optional. YYYY-MM-DD: card payments before this stay in the card's starting
   // balance instead of becoming transfers (see constants.ts).
   CC_TRANSFER_CUTOFF?: string;
+  // Optional. "off" stops asking Plaid to re-check banks (/transactions/refresh), which
+  // paid Plaid plans bill per call. Default: on.
+  PLAID_REFRESH?: string;
 }
 
 export interface AccountConfig {

@@ -36,6 +36,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the code is organized.
 
 ## Setup
 
+**Step-by-step guide: [docs/setup](docs/setup/README.md)** (Plaid, YNAB, Cloudflare, the worker).
+The short version:
+
 1. **Get the code and log in to Cloudflare**
    ```bash
    git clone https://github.com/MikeAllen1/ynab-sync-plaid.git
@@ -89,7 +92,7 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 
 | Where | What |
 |---|---|
-| `wrangler.toml` `[vars]` | `PLAID_ENV`, `YNAB_BUDGET_ID`, `TIMEZONE`, optional `CC_TRANSFER_CUTOFF` (card payments before this date stay in the card's starting balance) and `WORKER_ORIGIN` (links in alert emails) |
+| `wrangler.toml` `[vars]` | `PLAID_ENV`, `YNAB_BUDGET_ID`, `TIMEZONE`, optional `CC_TRANSFER_CUTOFF` (card payments before this date stay in the card's starting balance), `PLAID_REFRESH = "off"` (no billed refresh calls on paid Plaid plans) and `WORKER_ORIGIN` (links in alert emails) |
 | Secrets | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `YNAB_TOKEN`, `ADMIN_TOKEN`; optional `RESEND_API_KEY` + `ALERT_EMAIL_TO` (email when a bank needs reconnecting or syncs fail), `ALERT_WEBHOOK_URL` |
 | Dashboard → Settings | Per account: sync on/off, how often, catch-up window, health checks, how card payments name each card (last 4 / words) |
 | Dashboard → Rules | **Skip rules** (bank items never to import), **payee aliases** (names that mean the same merchant), **transfer labels** (name transfers to your own accounts elsewhere by their last digits, e.g. `1234` → "Savings") |
@@ -107,7 +110,9 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 - Cloudflare's free plan covers it: one cron every 15 minutes, a few KV reads and writes per sync.
 - YNAB's API allows 200 requests an hour per token; the worker reads only a ~5-week window and caches
   account lists to stay well under that.
-- Plaid pricing is between you and Plaid. Check your plan's terms before linking real banks.
+- Plaid: new US/Canada personal accounts get a free Trial plan (up to 10 bank logins). Paid plans bill
+  Transactions per bank login per month, and refresh calls per call (set `PLAID_REFRESH = "off"` to skip those).
+  Check your plan's terms before linking real banks.
 
 ## Security
 
