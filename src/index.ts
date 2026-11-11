@@ -139,7 +139,7 @@ export const workerEntry = {
       const bodyBytes = new Uint8Array(totalBytes);
       let offset = 0;
       for (const chunk of chunks) { bodyBytes.set(chunk, offset); offset += chunk.byteLength; }
-      const rawBody = new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes);
+      const rawBody = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bodyBytes);
       const verification = req.headers.get("Plaid-Verification");
       const verified = await verifyPlaidWebhook(env, rawBody, verification);
 
