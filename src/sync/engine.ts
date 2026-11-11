@@ -607,15 +607,34 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
   if (!options.backfillOnly) {
-    let hasMore = true;
-    while (hasMore) {
-      const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
-      added.push(...(resp.added || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      modified.push(...(resp.modified || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      for (const r of (resp.removed || [])) if (!r.account_id || r.account_id === pid) removedIds.add(r.transaction_id);
-      cursor = resp.next_cursor;
-      hasMore = resp.has_more;
+    const originalCursor = cursor;
+    const maxPaginationRestarts = 3;
+    let completed = false;
+    for (let attempt = 0; attempt <= maxPaginationRestarts && !completed; attempt++) {
+      // A mutation-during-pagination invalidates the entire page sequence. Discard
+      // every partial result and restart from the cursor supplied to page one.
+      added.length = 0;
+      modified.length = 0;
+      removedIds.clear();
+      let pageCursor = originalCursor;
+      let hasMore = true;
+      try {
+        while (hasMore) {
+          const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor: pageCursor, count: 500 });
+          added.push(...resp.added.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
+          modified.push(...resp.modified.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
+          for (const r of resp.removed) if (r.account_id === pid) removedIds.add(r.transaction_id);
+          pageCursor = resp.next_cursor;
+          hasMore = resp.has_more;
+        }
+        cursor = pageCursor;
+        completed = true;
+      } catch (error: any) {
+        const message = String(error?.message || error);
+        if (!message.includes("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION") || attempt === maxPaginationRestarts) throw error;
+      }
     }
+    if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
   }
 
   // ---- Plaid: current state of the verification window (read-only) ----
