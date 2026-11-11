@@ -1,4 +1,5 @@
 import { Env } from "../types";
+import { CONFIG_UNREADABLE } from "../store/accounts";
 
 /**
  * Names for transfers to and from your own accounts at other banks, by the last digits
@@ -22,11 +23,25 @@ export function normalizeTransferLabel(x: any): TransferLabel | null {
 }
 
 export async function getTransferLabels(env: Env): Promise<TransferLabel[]> {
-  try {
-    const raw = await env.SYNC_STATE.get(TRANSFER_LABELS_KV_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeTransferLabel).filter((x): x is TransferLabel => !!x) : [];
-  } catch { return []; }
+  let raw: string | null;
+  try { raw = await env.SYNC_STATE.get(TRANSFER_LABELS_KV_KEY); }
+  catch {
+    throw new Error(`${CONFIG_UNREADABLE}: saved transfer labels could not be read from SYNC_STATE. Sync was stopped rather than guessing transfer payees.`);
+  }
+  if (raw === null) return [];
+  let parsed: any;
+  try { parsed = JSON.parse(raw); }
+  catch {
+    throw new Error(`${CONFIG_UNREADABLE}: saved transfer labels contain invalid JSON. Repair them in Settings before syncing.`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${CONFIG_UNREADABLE}: saved transfer labels are not an array. Repair them in Settings before syncing.`);
+  }
+  const normalized = parsed.map(normalizeTransferLabel);
+  if (normalized.some(label => !label)) {
+    throw new Error(`${CONFIG_UNREADABLE}: saved transfer labels contain an invalid entry. Repair them in Settings before syncing.`);
+  }
+  return normalized as TransferLabel[];
 }
 
 export async function putTransferLabels(env: Env, labels: unknown): Promise<TransferLabel[]> {
