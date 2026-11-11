@@ -47,6 +47,21 @@ export class SyncLock {
       }
     }
 
+    if (url.pathname === "/webhook/key-read" && request.method === "POST") {
+      const allowed = await this.state.storage.transaction(async txn => {
+        const key = "webhook:key-read-window";
+        const stored = await txn.get<{ start: number; count: number }>(key);
+        const window = stored && now - stored.start < 600000
+          ? stored
+          : { start: now, count: 0 };
+        if (window.count >= 1000) return false;
+        window.count++;
+        await txn.put(key, window);
+        return true;
+      });
+      return Response.json({ allowed });
+    }
+
     if (url.pathname === "/webhook/claim" && request.method === "POST") {
       let body: any;
       try { body = await request.json(); } catch { return Response.json({ error: "invalid claim" }, { status: 400 }); }
