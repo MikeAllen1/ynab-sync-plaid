@@ -68,12 +68,26 @@ export async function keepLeaseAlive(): Promise<void> {
 }
 
 export async function renewSyncLock(env: Env, lock: LockHandle): Promise<void> {
+  if (lock.mode !== "durable-object" || !env.SYNC_LOCK) {
+    throw new Error("SYNC_LOCK lease cannot be renewed; aborting financial writes.");
+  }
+  let response: Response;
   try {
-    if (lock.mode === "durable-object" && env.SYNC_LOCK) {
-      const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName(SYNC_LOCK_DO_ID));
-      await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(lock.id)}`, { method: "POST" });
-    }
-  } catch { /* the TTL is generous; a missed renewal is not fatal */ }
+    const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName(SYNC_LOCK_DO_ID));
+    response = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(lock.id)}`, { method: "POST" });
+  } catch {
+    throw new Error("SYNC_LOCK lease renewal failed; aborting financial writes.");
+  }
+  if (!response.ok) {
+    throw new Error(`SYNC_LOCK lease renewal failed (HTTP ${response.status}); aborting financial writes.`);
+  }
+  let data: any;
+  try { data = await response.json(); } catch {
+    throw new Error("SYNC_LOCK lease renewal returned an invalid response; aborting financial writes.");
+  }
+  if (data?.renewed !== true) {
+    throw new Error("SYNC_LOCK lease is no longer owned by this run; aborting financial writes.");
+  }
 }
 
 export async function releaseSyncLock(env: Env, lock: LockHandle): Promise<void> {
