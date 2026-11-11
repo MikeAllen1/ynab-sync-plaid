@@ -65,7 +65,7 @@ export async function requireAdmin(req: Request, env: Env): Promise<Response | n
   let cookieValid = false;
   try {
     const decoded = cookieValue ? decodeURIComponent(cookieValue) : "";
-    const match = /^v1\\.(\\d+)\\.([a-f0-9]{64})$/.exec(decoded);
+    const match = /^v1\.(\d+)\.([a-f0-9]{64})$/.exec(decoded);
     if (match) {
       const issuedAt = Number(match[1]);
       const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
