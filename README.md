@@ -37,7 +37,7 @@ More: [how a charge flows through it](docs/HOW-IT-WORKS.md) · [FAQ](docs/FAQ.md
 
 ## What you need
 
-- [Node.js](https://nodejs.org) 18 or newer
+- [Node.js](https://nodejs.org) 22 or newer (matches the CI and current Wrangler toolchain)
 - A [Cloudflare](https://dash.cloudflare.com/sign-up) account (the free plan is enough)
 - A [Plaid](https://dashboard.plaid.com/signup) account with access to the **Transactions** product.
   Use `sandbox` to try it with Plaid's test banks; real banks need Plaid's production access.
