@@ -283,7 +283,7 @@ var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases
 
 function $(id) { return document.getElementById(id); }
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-function token() { return localStorage.getItem(TOKEN_KEY) || ""; }
+function token() { return sessionStorage.getItem(TOKEN_KEY) || ""; }
 function dry() { return $("dryRun").checked; }
 function selected() { return $("accountSelect").value; }
 function pretty(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
@@ -868,8 +868,8 @@ async function toggleGlobal() {
   if (on && !confirm("Pause all syncing? Nothing imports until you resume.")) return;
   try { await api(on ? "/pause" : "/resume"); await refreshGlobal(); loadAll(); } catch (e) { attention([e.message], "bad"); }
 }
-function saveToken() { var v = $("token").value.trim(); if (!v) return; localStorage.setItem(TOKEN_KEY, v); $("token").value = ""; loadAll(); }
-function clearToken() { localStorage.removeItem(TOKEN_KEY); setOverall("No token", ""); attention(["Admin token cleared from this browser."], "ok"); }
+function saveToken() { var v = $("token").value.trim(); if (!v) return; sessionStorage.setItem(TOKEN_KEY, v); $("token").value = ""; loadAll(); }
+function clearToken() { sessionStorage.removeItem(TOKEN_KEY); setOverall("No token", ""); attention(["Admin token cleared from this browser."], "ok"); }
 
 async function loadItems(force) {
   try {
@@ -936,7 +936,7 @@ async function saveAccounts() {
 (function init() {
   if (location.hash.indexOf("token=") >= 0) {
     var t = new URLSearchParams(location.hash.slice(1)).get("token");
-    if (t) localStorage.setItem(TOKEN_KEY, t);
+    if (t) sessionStorage.setItem(TOKEN_KEY, t);
     history.replaceState(null, "", location.pathname);
   }
   $("accountSelect").addEventListener("change", function () { loadEvents(); $("traceOut").innerHTML = ""; });
