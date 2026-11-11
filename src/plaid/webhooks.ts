@@ -125,7 +125,9 @@ export async function getPlaidVerificationKey(env: Env, kid: string): Promise<an
   whKeyMisses.set(kid, nowMs + 600000);
   return null;
 }
-export const whKeyMisses = new Map<string, number>();\nexport const whKeyReadWindow = { start: 0, count: 0 };\nexport const WH_KEY_READS_PER_WINDOW = 1000;
+export const whKeyMisses = new Map<string, number>();
+export const whKeyReadWindow = { start: 0, count: 0 };
+export const WH_KEY_READS_PER_WINDOW = 1000;
 export const whLookupWindow = { start: 0, count: 0 };
 export const WH_KEY_LOOKUPS_PER_WINDOW = 5;
 
