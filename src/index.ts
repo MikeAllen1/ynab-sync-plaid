@@ -110,7 +110,9 @@ export const workerEntry = {
     // written to Web Storage or returned to page JavaScript.
     if (url.pathname === "/session") {
       const origin = req.headers.get("Origin");
-      if (origin !== url.origin) return json({ ok: false, error: "same-origin request required" }, 403);
+      if ((req.method === "POST" || req.method === "DELETE") && origin !== url.origin) {
+        return json({ ok: false, error: "same-origin request required" }, 403);
+      }
       if (req.method === "POST") {
         if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
         const supplied = req.headers.get("x-admin-token") || "";
