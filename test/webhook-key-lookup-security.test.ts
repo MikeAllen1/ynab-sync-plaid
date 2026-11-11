@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verifyPlaidWebhook } from "../src/plaid/webhooks";
+import { getPlaidVerificationKey, verifyPlaidWebhook, whKeyReadWindow, WH_KEY_READS_PER_WINDOW } from "../src/plaid/webhooks";
 import type { Env } from "../src/types";
 
 function b64url(value: unknown): string {
@@ -19,4 +19,20 @@ test("malformed and oversized Plaid key IDs are rejected before KV access", asyn
     assert.equal(await verifyPlaidWebhook(env, "{}", `${header}.${payload}.${signature}`), false);
   }
   assert.equal(reads, 0);
+});
+
+test("webhook key cache reads stop at the per-isolate budget", async () => {
+  let reads = 0;
+  const env = {
+    SYNC_STATE: { get: async () => { reads++; return null; } }
+  } as unknown as Env;
+  whKeyReadWindow.start = Date.now();
+  whKeyReadWindow.count = WH_KEY_READS_PER_WINDOW;
+  try {
+    assert.equal(await getPlaidVerificationKey(env, "valid-shaped-kid"), null);
+    assert.equal(reads, 0);
+  } finally {
+    whKeyReadWindow.start = 0;
+    whKeyReadWindow.count = 0;
+  }
 });
