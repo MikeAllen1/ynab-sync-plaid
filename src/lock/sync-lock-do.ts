@@ -21,6 +21,32 @@ export class SyncLock {
     const ttlMs = SYNC_LOCK_TTL_SECONDS * 1000;
 
 
+    if (url.pathname.startsWith("/session/") && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch { return Response.json({ error: "invalid session request" }, { status: 400 }); }
+      const fingerprint = String(body?.fingerprint || "");
+      if (!/^[a-f0-9]{64}$/.test(fingerprint)) return Response.json({ error: "invalid session id" }, { status: 400 });
+      const key = `session:${fingerprint}`;
+      if (url.pathname === "/session/create") {
+        const expiresAt = Number(body?.expiresAt);
+        if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + 3600000) {
+          return Response.json({ error: "invalid session expiry" }, { status: 400 });
+        }
+        await this.state.storage.put(key, { expiresAt });
+        return Response.json({ created: true });
+      }
+      if (url.pathname === "/session/validate") {
+        const record = await this.state.storage.get<{ expiresAt: number }>(key);
+        const valid = !!record && Number.isSafeInteger(record.expiresAt) && record.expiresAt > now;
+        if (record && !valid) await this.state.storage.delete(key);
+        return Response.json({ valid });
+      }
+      if (url.pathname === "/session/revoke") {
+        await this.state.storage.delete(key);
+        return Response.json({ revoked: true });
+      }
+    }
+
     if (url.pathname === "/webhook/claim" && request.method === "POST") {
       let body: any;
       try { body = await request.json(); } catch { return Response.json({ error: "invalid claim" }, { status: 400 }); }
