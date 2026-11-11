@@ -49,28 +49,36 @@ export function setupHtml(): string {
 <script>
 var tokenInput = document.getElementById("token");
 sessionStorage.removeItem("ynab_sync_admin_token");
-tokenInput.addEventListener("change", authenticate);
+var authentication = null;
+tokenInput.addEventListener("change", function () { authenticate().catch(function () {}); });
 async function authenticate() {
+  if (authentication) return authentication;
   var value = tokenInput.value.trim();
   if (!value) return;
-  try {
+  authentication = (async function () {
     var response = await fetch("/session", { method: "POST", credentials: "same-origin", headers: { "x-admin-token": value } });
     var data = await response.json();
     if (!response.ok) throw new Error(data.error || "Authentication failed.");
     tokenInput.value = "";
     setStatus("Authenticated. The admin token is held in an HttpOnly cookie, not Web Storage.", true);
     loadBanks();
-  } catch (e) { setStatus(e.message, false); }
+  })();
+  try { await authentication; }
+  catch (e) { setStatus(e.message, false); throw e; }
+  finally { authentication = null; }
 }
 
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function setStatus(msg, ok) { var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; }
-function post(path, body) {
-  return fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
-    .then(function (r) { return r.json(); });
+async function post(path, body) {
+  if (tokenInput.value.trim()) await authenticate();
+  var response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  return response.json();
 }
-function get(path) {
-  return fetch(path, { credentials: "same-origin" }).then(function (r) { return r.json(); });
+async function get(path) {
+  if (tokenInput.value.trim()) await authenticate();
+  var response = await fetch(path, { credentials: "same-origin" });
+  return response.json();
 }
 
 function openLink(linkToken, receivedRedirectUri, onSuccess) {
