@@ -30,7 +30,7 @@ export async function verifyPlaidWebhook(env: Env, rawBody: string, verification
   }
 
   // Plaid only signs webhooks with ES256. Reject anything else (incl. "none").
-  if (header.alg !== "ES256" || !header.kid) return false;
+  if (header.alg !== "ES256" || typeof header.kid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(header.kid)) return false;
   // Cheap checks before any key lookup: a stale or undated token is refused without
   // a call to Plaid or a KV read.
   try {
@@ -125,7 +125,7 @@ export async function getPlaidVerificationKey(env: Env, kid: string): Promise<an
   whKeyMisses.set(kid, nowMs + 600000);
   return null;
 }
-export const whKeyMisses = new Map<string, number>();
+export const whKeyMisses = new Map<string, number>();\nexport const whKeyReadWindow = { start: 0, count: 0 };\nexport const WH_KEY_READS_PER_WINDOW = 1000;
 export const whLookupWindow = { start: 0, count: 0 };
 export const WH_KEY_LOOKUPS_PER_WINDOW = 5;
 
