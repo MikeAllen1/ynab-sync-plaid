@@ -101,20 +101,7 @@ export async function requireAdmin(req: Request, env: Env): Promise<Response | n
   let cookieValid = false;
   try {
     const decoded = cookieValue ? decodeURIComponent(cookieValue) : "";
-    const match = /^v1\.(\d+)\.([a-f0-9]{64})$/.exec(decoded);
-    if (match) {
-      const issuedAt = Number(match[1]);
-      const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
-      if (Number.isSafeInteger(issuedAt) && ageSeconds >= 0 && ageSeconds <= 3600 && env.ADMIN_TOKEN) {
-        const key = await crypto.subtle.importKey(
-          "raw", new TextEncoder().encode(env.ADMIN_TOKEN),
-          { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-        );
-        const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
-        const expected = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
-        cookieValid = constantTimeEqual(match[2], expected);
-      }
-    }
+    if (/^[a-f0-9]{64}$/.test(decoded)) cookieValid = await isAdminSessionValid(env, decoded);
   } catch { cookieValid = false; }
 
   if (!env.ADMIN_TOKEN) {
