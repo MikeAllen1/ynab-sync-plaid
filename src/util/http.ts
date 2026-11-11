@@ -53,14 +53,45 @@ export const NO_FRAMING = {
 
 export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
 
-export async function createAdminSessionValue(adminToken: string, issuedAt = Math.floor(Date.now() / 1000)): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(adminToken),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
-  const hex = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
-  return `v1.${issuedAt}.${hex}`;
+export async function createAdminSessionValue(env: Env): Promise<string> {
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for revocable admin sessions");
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const sessionId = [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sessionId));
+  const fingerprint = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/session/create", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fingerprint, expiresAt: Date.now() + 3600000 })
+  });
+  if (!response.ok) throw new Error("Admin session registry unavailable");
+  return sessionId;
+}
+
+async function isAdminSessionValid(env: Env, sessionId: string): Promise<boolean> {
+  if (!env.SYNC_LOCK || !/^[a-f0-9]{64}$/.test(sessionId)) return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sessionId));
+  const fingerprint = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/session/validate", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fingerprint })
+  });
+  if (!response.ok) return false;
+  const data: any = await response.json();
+  return data.valid === true;
+}
+
+export async function revokeAdminSession(env: Env, sessionId: string): Promise<void> {
+  if (!env.SYNC_LOCK || !/^[a-f0-9]{64}$/.test(sessionId)) return;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sessionId));
+  const fingerprint = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/session/revoke", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fingerprint })
+  });
+  if (!response.ok) throw new Error("Admin session revocation unavailable");
 }
 
 export async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
