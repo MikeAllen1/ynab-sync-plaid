@@ -49,17 +49,17 @@ export function setupHtml(): string {
 <script>
 var TOKEN_KEY = "ynab_sync_admin_token";
 var tokenInput = document.getElementById("token");
-tokenInput.value = localStorage.getItem(TOKEN_KEY) || "";
-tokenInput.addEventListener("change", function () { localStorage.setItem(TOKEN_KEY, tokenInput.value.trim()); loadBanks(); });
+tokenInput.value = sessionStorage.getItem(TOKEN_KEY) || "";
+tokenInput.addEventListener("change", function () { sessionStorage.setItem(TOKEN_KEY, tokenInput.value.trim()); loadBanks(); });
 
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function setStatus(msg, ok) { var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; }
 function post(path, body) {
-  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": (localStorage.getItem(TOKEN_KEY) || "").trim() }, body: JSON.stringify(body || {}) })
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": (sessionStorage.getItem(TOKEN_KEY) || "").trim() }, body: JSON.stringify(body || {}) })
     .then(function (r) { return r.json(); });
 }
 function get(path) {
-  return fetch(path, { headers: { "x-admin-token": (localStorage.getItem(TOKEN_KEY) || "").trim() } }).then(function (r) { return r.json(); });
+  return fetch(path, { headers: { "x-admin-token": (sessionStorage.getItem(TOKEN_KEY) || "").trim() } }).then(function (r) { return r.json(); });
 }
 
 function openLink(linkToken, receivedRedirectUri, onSuccess) {
