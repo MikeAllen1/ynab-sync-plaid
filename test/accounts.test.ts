@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getAccountAutomationSettings, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
+import { getAccountAutomationSettings, getAccounts, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
 import type { Env } from "../src/types";
 
 function mockEnv(initial: Record<string, string> = {}) {
@@ -97,4 +97,35 @@ test("account store read failure does not fall back to a potentially stale envir
     () => import("../src/store/accounts").then(m => m.getAccounts(env)),
     /SYNC_STATE is unavailable.*No account sync was performed/
   );
+});
+
+test("persisted account maps fail closed when an entry is incomplete or duplicated", async () => {
+  const invalidMaps = [
+    [{ nickname: "checking", plaid_account_id: "plaid-checking", ynab_account_id: "ynab-checking" }],
+    [
+      { nickname: "checking", plaid_access_token: "token-a", plaid_account_id: "same-id", ynab_account_id: "ynab-a" },
+      { nickname: "savings", plaid_access_token: "token-b", plaid_account_id: "same-id", ynab_account_id: "ynab-b" }
+    ],
+    [{ nickname: "checking", plaid_access_token: "token", plaid_account_id: "plaid-checking", ynab_account_id: "ynab-checking", is_credit_card: "false" }]
+  ];
+  for (const accounts of invalidMaps) {
+    const { env } = mockEnv({ account_map: JSON.stringify(accounts) });
+    await assert.rejects(() => getAccounts(env), /CONFIG_UNREADABLE/);
+  }
+});
+
+test("valid persisted account maps normalize nicknames consistently", async () => {
+  const { env } = mockEnv({
+    account_map: JSON.stringify([{
+      nickname: "  Checking   Account ",
+      plaid_access_token: " token ",
+      plaid_account_id: " plaid-checking ",
+      ynab_account_id: " ynab-checking "
+    }])
+  });
+  const accounts = await getAccounts(env);
+  assert.equal(accounts[0].nickname, "checking-account");
+  assert.equal(accounts[0].plaid_access_token, "token");
+  assert.equal(accounts[0].plaid_account_id, "plaid-checking");
+  assert.equal(accounts[0].ynab_account_id, "ynab-checking");
 });
