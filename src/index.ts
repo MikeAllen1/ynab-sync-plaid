@@ -539,7 +539,7 @@ export const workerEntry = {
         }
         const accounts = await getAccounts(env);
         if (accounts.some(a => a.nickname === nickname)) return { ok: false, error: `An account named ${nickname} already exists` };
-        if (accounts.some(a => a.plaid_account_id === body.plaid_account_id)) return { ok: false, error: "That bank account is already mapped" };
+        if (accounts.some(a => a.plaid_account_id === plaidAccountId)) return { ok: false, error: "That bank account is already mapped" };
         accounts.push({
           nickname,
           institution: String(body.institution || ""),
