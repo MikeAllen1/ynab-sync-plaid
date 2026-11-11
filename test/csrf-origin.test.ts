@@ -1,13 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { workerEntry } from "../src/index";
+import { createAdminSessionValue } from "../src/util/http";
 import type { Env } from "../src/types";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 const env = { ADMIN_TOKEN: "admin-test-token" } as Env;
-const cookie = `__Host-ynab_admin=${encodeURIComponent(`v1.${Math.floor(Date.now() / 1000)}.admin-test-token`)}`;
 
 test("state-changing routes cannot be invoked with GET", async () => {
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
   const paths = [
     "/sync",
     "/force-refresh",
@@ -31,6 +32,7 @@ test("state-changing routes cannot be invoked with GET", async () => {
 });
 
 test("cookie-authenticated state changes reject cross-origin POST requests", async () => {
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
   const response = await workerEntry.routeFetch(new Request("https://worker.example/skip-rules", {
     method: "POST",
     headers: {
@@ -45,6 +47,7 @@ test("cookie-authenticated state changes reject cross-origin POST requests", asy
 });
 
 test("cookie-authenticated state changes reject requests without an Origin header", async () => {
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
   const response = await workerEntry.routeFetch(new Request("https://worker.example/skip-rules/reset", {
     method: "POST",
     headers: { Cookie: cookie }
