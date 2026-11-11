@@ -38,8 +38,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the code is organized.
 
 1. **Get the code and log in to Cloudflare**
    ```bash
-   git clone https://github.com/<you>/ynab-sync.git
-   cd ynab-sync
+   git clone https://github.com/MikeAllen1/ynab-plaid-sync.git
+   cd ynab-plaid-sync
    npm install
    npx wrangler login
    ```
