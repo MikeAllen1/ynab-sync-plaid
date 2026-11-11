@@ -176,8 +176,8 @@ export async function accountParam(env: Env, url: URL): Promise<string | undefin
 
 // Mask a token for display: keep a short non-sensitive prefix only.
 export function maskToken(t: string | undefined): string {
-  const s = String(t || "");
-  return s ? s.slice(0, 18) + "…" : "";
+  // Never reveal token characters in API responses or dashboard diagnostics.
+  return t ? "••••••••" : "";
 }
 
 export async function getAccountAutomationSettings(env: Env): Promise<AccountAutomationSetting[]> {
