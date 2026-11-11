@@ -125,6 +125,17 @@ export async function getAccountAutomationSettings(env: Env): Promise<AccountAut
     saved = parsed;
   }
 
+  for (const item of saved) {
+    if (!item || typeof item.nickname !== "string" || !item.nickname.trim()) {
+      throw new Error(`${CONFIG_UNREADABLE}: saved account settings contain an invalid entry.`);
+    }
+    for (const field of ["sync_enabled", "backfill_enabled", "audit_enabled"]) {
+      if (item[field] !== undefined && typeof item[field] !== "boolean") {
+        throw new Error(`${CONFIG_UNREADABLE}: saved setting ${field} for ${item.nickname} is not a boolean.`);
+      }
+    }
+  }
+
   return accounts.map(acct => {
     const defaults = defaultSettingForAccount(acct.nickname);
     const override = saved.find(s => s && s.nickname === acct.nickname) || {};
@@ -132,10 +143,10 @@ export async function getAccountAutomationSettings(env: Env): Promise<AccountAut
 
     return {
       nickname: acct.nickname,
-      sync_enabled: override.sync_enabled !== undefined ? override.sync_enabled !== false : defaults.sync_enabled,
-      backfill_enabled: override.backfill_enabled !== undefined ? override.backfill_enabled !== false : defaults.backfill_enabled,
+      sync_enabled: override.sync_enabled !== undefined ? override.sync_enabled : defaults.sync_enabled,
+      backfill_enabled: override.backfill_enabled !== undefined ? override.backfill_enabled : defaults.backfill_enabled,
       sync_frequency_minutes: SYNC_FREQUENCY_OPTIONS.includes(freq) ? freq : defaults.sync_frequency_minutes,
-      audit_enabled: override.audit_enabled !== undefined ? override.audit_enabled !== false : defaults.audit_enabled
+      audit_enabled: override.audit_enabled !== undefined ? override.audit_enabled : defaults.audit_enabled
     };
   });
 }
@@ -150,13 +161,38 @@ export async function putAccountAutomationSettings(env: Env, settings: any[]): P
   // (this was the "an account's sync turned itself back on" bug). Fallback order is now:
   // input value -> existing saved value -> built-in default.
   let saved: AccountAutomationSetting[] = [];
-  try {
-    const raw = await env.SYNC_STATE.get("account_automation_settings");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) saved = parsed;
+  const raw = await env.SYNC_STATE.get("account_automation_settings");
+  if (raw !== null) {
+    let parsed: any;
+    try { parsed = JSON.parse(raw); } catch {
+      throw new Error(`${CONFIG_UNREADABLE}: the saved account settings can't be read. Restore valid settings before making a partial change.`);
     }
-  } catch { saved = []; }
+    if (!Array.isArray(parsed)) {
+      throw new Error(`${CONFIG_UNREADABLE}: the saved account settings aren't an array. Restore valid settings before making a partial change.`);
+    }
+    for (const item of parsed) {
+      if (!item || typeof item.nickname !== "string" || !item.nickname.trim()) {
+        throw new Error(`${CONFIG_UNREADABLE}: saved account settings contain an invalid entry.`);
+      }
+      for (const field of ["sync_enabled", "backfill_enabled", "audit_enabled"]) {
+        if (item[field] !== undefined && typeof item[field] !== "boolean") {
+          throw new Error(`${CONFIG_UNREADABLE}: saved setting ${field} for ${item.nickname} is not a boolean.`);
+        }
+      }
+    }
+    saved = parsed;
+  }
+  if (!Array.isArray(settings)) throw new Error("settings must be an array");
+  for (const item of settings) {
+    if (!item || typeof item.nickname !== "string" || !item.nickname.trim()) throw new Error("Every setting requires a nickname.");
+    for (const field of ["sync_enabled", "backfill_enabled", "audit_enabled"]) {
+      if (item[field] !== undefined && typeof item[field] !== "boolean") throw new Error(`${field} must be a boolean.`);
+    }
+    if (item.sync_frequency_minutes !== undefined &&
+      !SYNC_FREQUENCY_OPTIONS.includes(Number(item.sync_frequency_minutes))) {
+      throw new Error("sync_frequency_minutes must be one of the supported frequency options.");
+    }
+  }
 
   const normalized = accounts.map(acct => {
     const defaults = defaultSettingForAccount(acct.nickname);
@@ -168,8 +204,8 @@ export async function putAccountAutomationSettings(env: Env, settings: any[]): P
     // For each field: use the input if provided, else the existing saved value,
     // else the built-in default. This makes partial saves non-destructive.
     const pick = (inVal: any, prevVal: any, defVal: boolean): boolean =>
-      inVal !== undefined ? inVal !== false
-      : prevVal !== undefined ? prevVal !== false
+      inVal !== undefined ? inVal
+      : prevVal !== undefined ? prevVal
       : defVal;
 
     return {
