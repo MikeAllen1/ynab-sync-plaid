@@ -581,7 +581,14 @@ export const workerEntry = {
     // reconnect calls below carry the admin token the user pastes in. Handles the
     // OAuth redirect that Chase requires.
     if (url.pathname === "/setup") {
-      return new Response(setupHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", ...NO_FRAMING } });
+      const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
+      const nonce = btoa(String.fromCharCode(...nonceBytes));
+      const html = setupHtml().replace(/<script(?![^>]*\\bnonce=)/gi, '<script nonce="' + nonce + '"')
+        .replace(/<style(?![^>]*\\bnonce=)/gi, '<style nonce="' + nonce + '"');
+      return new Response(html, { headers: {
+        "Content-Type": "text/html; charset=utf-8", ...NO_FRAMING,
+        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "' https://cdn.plaid.com; script-src-attr 'unsafe-inline'; style-src 'self' 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.plaid.com; frame-src https://*.plaid.com; font-src 'self' data:"
+      } });
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
     // update accounts without editing wrangler.toml or redeploying.
