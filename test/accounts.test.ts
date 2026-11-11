@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getAccountAutomationSettings, putAccountAutomationSettings } from "../src/store/accounts";
+import { getAccountAutomationSettings, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
 import type { Env } from "../src/types";
 
 function mockEnv(initial: Record<string, string> = {}) {
@@ -67,4 +67,19 @@ test("valid partial update preserves an explicitly disabled account", async () =
   assert.equal(updated.find(s => s.nickname === "checking")?.sync_enabled, false);
   assert.equal(updated.find(s => s.nickname === "savings")?.sync_enabled, false);
   assert.ok(values.get("account_automation_settings"));
+});
+
+test("account nickname whitespace is normalized consistently before persistence", async () => {
+  const { env, values } = mockEnv({ account_map: accountMap });
+  const saved = await saveAccountsMerged(env, [{
+    nickname: "  Checking   Account  ",
+    plaid_access_token: "new-access-token",
+    plaid_account_id: "plaid-new-account",
+    ynab_account_id: "ynab-new-account",
+    is_credit_card: false
+  }]);
+  assert.equal(saved[0].nickname, "checking-account");
+  const persisted = JSON.parse(values.get("account_map") || "[]");
+  assert.equal(persisted[0].nickname, "checking-account");
+  assert.ok(!persisted[0].nickname.includes(" "));
 });
