@@ -191,6 +191,14 @@ export const workerEntry = {
       return json(result);
     }
 
+    // Browser sessions authenticate with an ambient HttpOnly cookie. Require an
+    // exact same-origin Origin on every state-changing API request so a hostile
+    // sibling subdomain or cross-site form cannot ride the cookie. Plaid's signed
+    // webhook is intentionally handled above and is exempt from this browser check.
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.headers.get("Origin") !== url.origin) {
+      return json({ ok: false, error: "same-origin request required" }, 403);
+    }
+
     if (url.pathname === "/health") {
       const unauthorized = requireAdmin(req, env);
       if (unauthorized) return unauthorized;
