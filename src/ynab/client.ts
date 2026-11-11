@@ -90,7 +90,7 @@ export async function ynabUpdateEach(env: Env, updates: any[]): Promise<{ update
     // as invalid. A timeout, 5xx, malformed success body, or other ambiguous result
     // may mean the whole batch committed; replaying individual PATCHes could apply
     // unintended second-stage changes.
-    if (!/^YNAB update failed: 400\\b/.test(message)) throw batchError;
+    if (!/^YNAB update failed: 400\b/.test(message)) throw batchError;
     if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: message }] };
   }
   let updated = 0;
