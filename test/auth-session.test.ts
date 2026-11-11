@@ -28,7 +28,7 @@ test("HttpOnly session cookie authenticates requests without a JavaScript-readab
   const env = makeEnv();
   const response = await workerEntry.routeFetch(new Request("https://worker.example/session", {
     method: "GET",
-    headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(env.ADMIN_TOKEN)}` }
+    headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(`v1.${Math.floor(Date.now() / 1000)}.${env.ADMIN_TOKEN}`)}` }
   }), env, ctx);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
@@ -54,4 +54,16 @@ test("logout expires the HttpOnly session cookie", async () => {
   }), makeEnv(), ctx);
   assert.equal(response.status, 200);
   assert.match(response.headers.get("Set-Cookie") || "", /Max-Age=0/);
+});
+
+test("expired or future-dated admin session cookies are rejected server-side", async () => {
+  const env = makeEnv();
+  const now = Math.floor(Date.now() / 1000);
+  for (const issuedAt of [now - 3601, now + 60]) {
+    const response = await workerEntry.routeFetch(new Request("https://worker.example/session", {
+      method: "GET",
+      headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(`v1.${issuedAt}.${env.ADMIN_TOKEN}`)}` }
+    }), env, ctx);
+    assert.equal(response.status, 401);
+  }
 });
