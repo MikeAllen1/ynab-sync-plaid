@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
 
 
@@ -117,16 +117,17 @@ export const workerEntry = {
         if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
         const supplied = req.headers.get("x-admin-token") || "";
         if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(`v1.${Math.floor(Date.now() / 1000)}.${env.ADMIN_TOKEN}`)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionValue)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
           }
         });
       }
       if (req.method === "GET") {
-        const unauthorized = requireAdmin(req, env);
+        const unauthorized = await requireAdmin(req, env);
         if (unauthorized) return unauthorized;
         return json({ ok: true });
       }
@@ -200,20 +201,20 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/health") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await health(env));
     }
 
     if (url.pathname === "/audit/accounts") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await auditAccounts(env, url));
     }
 
 
     if (url.pathname === "/undo") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       if (url.searchParams.get("confirm") === "true") {
         if (req.method !== "POST") return json({ error: "POST required to confirm undo" }, 405);
@@ -224,7 +225,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/debug/plaid/raw") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await debugPlaidRawTransactions(env, url));
     }
@@ -233,7 +234,7 @@ export const workerEntry = {
     // account_id filter — so it works even when the stored plaid_account_id is
     // wrong. Use this to find the correct account_id to put in the map.
     if (url.pathname === "/debug/plaid-accounts") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const nickname = url.searchParams.get("account");
       const acct = (await getAccounts(env)).find((a: any) => a.nickname === nickname);
@@ -258,7 +259,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/reconcile") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const acct = url.searchParams.get("account") || undefined;
       const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days")) || 21));
@@ -266,7 +267,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/debug/account-map") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
       const accounts = await getAccounts(env);
@@ -284,7 +285,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/account-settings") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
       // Read-only. Settings are saved together with the accounts via /accounts/save.
@@ -293,7 +294,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/skip-rules") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
       if (req.method === "GET") return json({ rules: await getSkipRules(env), defaults: DEFAULT_SKIP_RULES });
@@ -309,7 +310,7 @@ export const workerEntry = {
 
     if (url.pathname === "/skip-rules/reset") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.delete("skip_rules");
       return json({ ok: true, rules: DEFAULT_SKIP_RULES });
@@ -318,7 +319,7 @@ export const workerEntry = {
     // NEW: Payee aliases — declare that differently-named transactions are the same
     // merchant, so dedup treats them as matches (e.g. an old brand name ↔ the new one).
     if (url.pathname === "/transfer-labels") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       if (req.method === "GET") return json({ labels: await getTransferLabels(env) });
       if (req.method === "POST") {
@@ -329,7 +330,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/payee-aliases") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
       if (req.method === "GET") return json({ aliases: await getPayeeAliases(env), defaults: DEFAULT_PAYEE_ALIASES });
@@ -345,7 +346,7 @@ export const workerEntry = {
 
     if (url.pathname === "/sync") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const onlyAccount = await accountParam(env, url);
       if (onlyAccount === null) return json({ ok: false, error: `No mapped account named '${url.searchParams.get("account")}'.` }, 400);
@@ -358,7 +359,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/dry-run") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const onlyAccount = await accountParam(env, url);
       if (onlyAccount === null) return json({ ok: false, error: `No mapped account named '${url.searchParams.get("account")}'.` }, 400);
@@ -367,7 +368,7 @@ export const workerEntry = {
 
     if (url.pathname === "/force-refresh") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await forcePlaidRefresh(env, url.origin));
     }
@@ -375,7 +376,7 @@ export const workerEntry = {
     if (url.pathname === "/backfill-recent") {
       if (req.method !== "GET" && req.method !== "POST") return json({ error: "GET or POST only" }, 405);
       if (req.method === "GET" && url.searchParams.get("dryRun") === "false") return json({ error: "POST required for a write-capable backfill" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       // Re-scan: re-check each account's import window for anything missing, without
       // moving the cursor. Honors the dry-run toggle, the global pause and each
@@ -390,14 +391,14 @@ export const workerEntry = {
 
     if (url.pathname === "/configure-webhooks") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await configurePlaidWebhooks(env, url.origin));
     }
 
     if (url.pathname === "/bootstrap") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const accountId = url.searchParams.get("account");
       if (!accountId) return json({ error: "missing ?account=" }, 400);
@@ -407,14 +408,14 @@ export const workerEntry = {
     // Rotate a card's import-id epoch (see resetCardEpoch).
     if (url.pathname === "/reset-card") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return lockedJson(env, () => resetCardEpoch(env, url));
     }
 
     if (url.pathname === "/pause") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.put("sync:enabled", "false");
       return json({ ok: true, sync_enabled: false });
@@ -422,7 +423,7 @@ export const workerEntry = {
 
     if (url.pathname === "/resume") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       await env.SYNC_STATE.put("sync:enabled", "true");
       return json({ ok: true, sync_enabled: true });
@@ -431,7 +432,7 @@ export const workerEntry = {
     // NEW: Plaid Link token creation (for setup page)
     if (url.pathname === "/link-token") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       try {
         const body = await req.json() as any;
@@ -475,7 +476,7 @@ export const workerEntry = {
     // sync never sees one half of an edit.
     if (url.pathname === "/accounts/save") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const body = await req.json() as any;
       if (!Array.isArray(body.accounts) || !Array.isArray(body.settings)) return json({ ok: false, error: "Body must be { accounts: [...], settings: [...] }" }, 400);
@@ -492,7 +493,7 @@ export const workerEntry = {
     // pending link id plus the item's accounts to choose from.
     if (url.pathname === "/exchange-token") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       try {
         const body = await req.json() as any;
@@ -515,7 +516,7 @@ export const workerEntry = {
     // Add-a-bank, step 2: add one account from a pending link to the account map.
     if (url.pathname === "/accounts/add") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return lockedJson(env, async () => {
         const body = await req.json() as any;
@@ -559,7 +560,7 @@ export const workerEntry = {
 
     // YNAB accounts, for the add-a-bank picker.
     if (url.pathname === "/ynab-accounts") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const list = await ynabGetAccounts(env);
       return json({ ok: true, accounts: list.filter((a: any) => !a.closed && !a.deleted).map((a: any) => ({ id: a.id, name: a.name, type: a.type })) });
@@ -575,7 +576,7 @@ export const workerEntry = {
     // NEW: Account config management (KV-backed). Lets the dashboard read and
     // update accounts without editing wrangler.toml or redeploying.
     if (url.pathname === "/accounts") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
       if (req.method === "GET") {
@@ -607,13 +608,13 @@ export const workerEntry = {
     // For each uncleared row the worker created: what Plaid says about that charge
     // right now, and why it hasn't flipped to posted. Read-only.
     if (url.pathname === "/debug/stuck-pending") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json({ ok: true, entries: await readJson(env, STUCK_LOG_KEY, []) });
     }
 
     if (url.pathname === "/debug/pending-trace") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const nickname = url.searchParams.get("account");
       const acct = (await getAccounts(env)).find(a => a.nickname === nickname);
@@ -625,7 +626,7 @@ export const workerEntry = {
       // The register (and every other view) only sees live rows. This asks YNAB for
       // the account's rows INCLUDING deleted ones, so a reconciled row that vanished
       // after you reconciled shows up here instead of silently moving the balance.
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const nickname = url.searchParams.get("account");
       if (!nickname) return json({ error: "missing ?account=" }, 400);
@@ -672,7 +673,7 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/debug/ynab-register") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const nickname = url.searchParams.get("account");
       if (!nickname) return json({ error: "missing ?account=" }, 400);
@@ -707,7 +708,7 @@ export const workerEntry = {
     // that bank and re-check its connection right away.
     if (url.pathname === "/reconnected") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const body = await req.json().catch(() => ({})) as any;
       const acct = (await getAccounts(env)).find(a => a.nickname === body.nickname);
@@ -722,7 +723,7 @@ export const workerEntry = {
 
     if (url.pathname === "/item-health") {
       if (req.method !== "GET" && req.method !== "POST") return json({ error: "GET or POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       // GET is strictly read-only; only an explicit POST may trigger checks/alerts.
       const health = req.method === "POST" ? await runItemHealthCheck(env, true) : await getItemHealth(env);
@@ -733,7 +734,7 @@ export const workerEntry = {
     // waiting for a real connection to die. Uses a fake "broken" item.
     if (url.pathname === "/test-alert") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const configured = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
       if (!configured) {
@@ -757,7 +758,7 @@ export const workerEntry = {
 
     // NEW: Structured event log (pending imports, gap-fills, retirements, etc).
     if (url.pathname === "/events") {
-      const unauthorized = requireAdmin(req, env);
+      const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       const events = await getEventLog(env);
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 200)));
