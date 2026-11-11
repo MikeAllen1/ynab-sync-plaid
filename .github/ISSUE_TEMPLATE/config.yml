@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup guide
+    url: https://github.com/MikeAllen1/ynab-sync-plaid/blob/main/docs/setup/README.md
+    about: Step-by-step setup for Plaid, YNAB, Cloudflare and the worker.
+  - name: FAQ
+    url: https://github.com/MikeAllen1/ynab-sync-plaid/blob/main/docs/FAQ.md
+    about: Common questions (cost, safety, Direct Import, limits).
+  - name: Report a security problem privately
+    url: https://github.com/MikeAllen1/ynab-sync-plaid/security/advisories/new
+    about: Please don't open a public issue for security problems.

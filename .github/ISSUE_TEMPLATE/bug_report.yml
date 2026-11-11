@@ -1,0 +1,45 @@
+name: Bug report
+description: Something synced wrong, or the worker shows an error.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste anything:** never include your Plaid keys, access tokens, YNAB token, admin token,
+        account numbers, or real names. Replace them with `xxxx`. Amounts and dates are fine.
+  - type: input
+    id: version
+    attributes:
+      label: Worker version
+      description: Shown at the top of the dashboard ("version …").
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: "A $6.50 pending charge stayed uncleared after it posted…"
+    validations:
+      required: true
+  - type: textarea
+    id: activity
+    attributes:
+      label: Dashboard details
+      description: From the dashboard's Activity tab, or the account's row on Account health, for the run in question. Remove anything personal.
+      render: text
+  - type: dropdown
+    id: account
+    attributes:
+      label: Account type
+      options: [Checking / savings, Credit card, Both, Not account-specific]
+  - type: dropdown
+    id: direct
+    attributes:
+      label: Is YNAB's Direct Import also linked to this account?
+      options: ["No", "Yes", "Not sure"]
+  - type: input
+    id: plaid
+    attributes:
+      label: Plaid environment
+      placeholder: production / sandbox

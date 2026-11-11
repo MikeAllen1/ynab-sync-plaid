@@ -61,6 +61,8 @@ It ends with your worker's address, e.g. `https://ynab-sync.jane.workers.dev`. O
 
 ## Link your banks
 
+<img alt="The setup page: admin token, Reconnect, and Link a new bank" src="../images/setup.png" width="560">
+
 1. Open `/setup` on your worker (or **Add a bank** on the dashboard) and enter your admin token.
 2. Click **Link a new bank** and sign in to your bank in Plaid's window. Banks like Chase send you to their own
    site and back.
@@ -95,6 +97,9 @@ Run it again whenever you link another bank.
 ## Tune it for your banks (optional)
 
 After a week or so, look at what came in and adjust on the dashboard:
+
+<img alt="The Rules tab: a skip rule, a payee alias and a transfer label" src="../images/rules.png" width="700">
+
 
 - **Settings → each credit card → "Payments name it by last 4 / words"**: how your checking account's
   statement names a payment to that card (e.g. `1234`, or `sapphire`). That's what turns a card payment into a

@@ -1,0 +1,29 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Bundle (wrangler dry run)
+        run: |
+          cp wrangler.toml.example wrangler.toml
+          sed -i 's/PASTE_KV_NAMESPACE_ID_HERE/00000000000000000000000000000000/; s/PASTE_YNAB_BUDGET_ID_HERE/00000000-0000-0000-0000-000000000000/' wrangler.toml
+          npx wrangler deploy --dry-run --outdir dist

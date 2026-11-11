@@ -13,6 +13,13 @@ free Cloudflare Worker you run yourself.
 - **Skip rules, payee aliases and transfer labels** for the cases banks get wrong.
 - Runs on Cloudflare's free plan. Your bank tokens stay in your own Cloudflare account.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
+  <img alt="The dashboard: three healthy accounts, each matching the bank, with recent activity" src="docs/images/dashboard-light.png" width="800">
+</picture>
+
+*The dashboard (demo data).*
+
 > Not affiliated with YNAB or Plaid. You need your own Plaid account (Plaid decides whether you get
 > access to real bank data) and your own YNAB subscription.
 
@@ -24,7 +31,9 @@ one identity from pending through posted, so the row it created is updated in pl
 matched by guessing. Content matching (amount, payee, date, one-to-one) is only a fallback for rows
 it didn't create. Every write runs under a single lock, so two syncs can never race.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the code is organized.
+More: [how a charge flows through it](docs/HOW-IT-WORKS.md) · [FAQ](docs/FAQ.md) ·
+[known limitations](docs/LIMITATIONS.md) · [how the code is organized](docs/ARCHITECTURE.md) ·
+[changelog](CHANGELOG.md)
 
 ## What you need
 
@@ -120,6 +129,11 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 - Every endpoint that reads or changes data needs the admin token (`x-admin-token` header), compared
   in constant time. Plaid webhooks are verified with Plaid's signed JWTs.
 - The dashboard and setup pages refuse to be framed.
+
+## Contributing and security
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems
+privately (see [SECURITY.md](SECURITY.md)), never in a public issue.
 
 ## License
 
