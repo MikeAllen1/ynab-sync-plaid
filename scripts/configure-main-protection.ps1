@@ -45,8 +45,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 $verified = $result | ConvertFrom-Json
 if (-not $verified.enforce_admins.enabled -or -not $verified.required_status_checks.strict -or
-    -not $verified.allow_force_pushes.enabled -eq $false -or
-    -not $verified.allow_deletions.enabled -eq $false) {
+    $verified.allow_force_pushes.enabled -ne $false -or
+    $verified.allow_deletions.enabled -ne $false -or
+    $verified.required_pull_request_reviews.required_approving_review_count -ne 0) {
     Write-Warning "GitHub returned protection settings that need manual review:"
     $verified | ConvertTo-Json -Depth 10
     throw "Branch-protection verification did not match all expected values."
