@@ -41,3 +41,29 @@ test("Plaid transaction history rejects malformed transaction rows", async () =>
     await assert.rejects(fetchRawWindow(env, account, 30, 100), /malformed transaction/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("Plaid transaction history rejects a changing total across pages", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return Response.json({
+      transactions: [{ transaction_id: "tx-" + calls, account_id: "plaid-account", date: "2026-11-11", amount: 12 }],
+      total_transactions: calls === 1 ? 2 : 3
+    });
+  };
+  try {
+    await assert.rejects(fetchRawWindow(env, account, 30, 1), /total_transactions changed/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Plaid transaction history rejects duplicate records across pages", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    transactions: [{ transaction_id: "same-tx", account_id: "plaid-account", date: "2026-11-11", amount: 12 }],
+    total_transactions: 2
+  });
+  try {
+    await assert.rejects(fetchRawWindow(env, account, 30, 1), /repeated a transaction across pages/);
+  } finally { globalThis.fetch = originalFetch; }
+});
