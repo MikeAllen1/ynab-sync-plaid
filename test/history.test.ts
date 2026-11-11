@@ -101,3 +101,34 @@ test("concurrent lock acquisitions are serialized by a storage transaction", asy
   const release = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(holder)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
   assert.equal(release.released, true);
 });
+
+
+test("an expired lock can be replaced, but the stale owner cannot renew or release the new lease", async () => {
+  const { env } = makeEnv();
+  const stub = env.SYNC_LOCK!.get(env.SYNC_LOCK!.idFromName("global"));
+  const originalNow = Date.now;
+  let now = 1_800_000_000_000;
+  Date.now = () => now;
+  try {
+    const first = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(first.acquired, true);
+
+    now += 901_000;
+    const second = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(second.acquired, true);
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.stole_expired, true);
+
+    const staleRenew = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(first.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(staleRenew.renewed, false);
+    const staleRelease = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(first.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(staleRelease.released, false);
+
+    const currentRenew = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(second.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(currentRenew.renewed, true);
+    const currentRelease = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(second.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(currentRelease.released, true);
+  } finally {
+    Date.now = originalNow;
+  }
+});
