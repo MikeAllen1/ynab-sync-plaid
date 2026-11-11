@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { NO_FRAMING, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
 
 
@@ -104,6 +104,41 @@ export const workerEntry = {
 
 
     if (url.pathname === "/dashboard") return dashboardHtml();
+
+    // Exchange the one-time admin token entered by the user for a browser session
+    // held only in a Secure, HttpOnly, SameSite=Strict cookie. The token is never
+    // written to Web Storage or returned to page JavaScript.
+    if (url.pathname === "/session") {
+      const origin = req.headers.get("Origin");
+      if (origin !== url.origin) return json({ ok: false, error: "same-origin request required" }, 403);
+      if (req.method === "POST") {
+        if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
+        const supplied = req.headers.get("x-admin-token") || "";
+        if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${env.ADMIN_TOKEN}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+          }
+        });
+      }
+      if (req.method === "GET") {
+        const unauthorized = requireAdmin(req, env);
+        if (unauthorized) return unauthorized;
+        return json({ ok: true });
+      }
+      if (req.method === "DELETE") {
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+          }
+        });
+      }
+      return json({ error: "method not allowed" }, 405);
+    }
 
     if (url.pathname === "/webhook") {
       if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
