@@ -1,4 +1,5 @@
 import { NO_FRAMING } from "../util/http";
+import { escapeHtml as esc, safeCssClass } from "../util/html";
 
 export function dashboardHtml(): Response {
   const html = `<!doctype html>
@@ -281,7 +282,6 @@ export function dashboardHtml(): Response {
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
 
 function $(id) { return document.getElementById(id); }
-function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function dry() { return $("dryRun").checked; }
 function selected() { return $("accountSelect").value; }
 function pretty(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
@@ -453,7 +453,7 @@ function renderOverview(h) {
     var diffSub = a.audit_unavailable ? "health check unavailable" : a.account && a.bank_balance == null ? "bank balance unavailable" : a.explained_difference ? (a.explained_by || money(Math.abs(a.explained_difference)) + " explained") : "";
     if (a.checked_at) diffSub = [diffSub, "checked " + ago(a.checked_at)].filter(Boolean).join(" · ");
     return '<div class="row"><span class="row-name">' + esc(pretty(n)) + (lvl[2] ? '<span class="secondary">' + esc(lvl[2]) + "</span>" : "") + "</span>" +
-      '<span class="chip ' + lvl[0] + '">' + esc(lvl[1]) + '</span>' +
+      '<span class="chip ' + safeCssClass(lvl[0], ["ok", "warn", "bad"]) + '">' + esc(lvl[1]) + '</span>' +
       '<span class="metric">Unexplained difference<strong>' + esc(diffText) + '</strong>' + esc(diffSub) + '</span>' +
       '<span class="metric">Bank pending, in YNAB<strong>' + esc(cov) + '</strong>' + esc(covSub) + '</span>' +
       '<span class="metric">Last synced<strong>' + esc(syncOff ? "n/a" : ago(st.last_account_sync)) + '</strong>' + esc(next) + '</span></div>';
@@ -685,11 +685,11 @@ function renderAudit() {
   $("audit").innerHTML = names.map(function (n) {
     var a = state.audit[n]; if (!a) return "";
     var lvl = accountLevel(n);
-    var kv = function (k, v) { return '<div class="kv"><span>' + esc(k) + "</span><span>" + v + "</span></div>"; };
+    var kv = function (k, v) { return '<div class="kv"><span>' + esc(k) + "</span><span>" + esc(v) + "</span></div>"; };
     var cands = (a.missing_balance_transactions || []).slice(0, 8).map(function (t) {
       return "<li>" + esc((t.source === "ynab" ? "In YNAB only: " : "At bank only: ") + t.date + " · " + t.payee + " · " + money(t.amount) + " · " + (t.confidence === "exact_delta" ? "explains the difference exactly" : t.confidence === "delta_combination" ? "explains it with another item" : "possible")) + "</li>";
     }).join("");
-    return '<div class="card item"><h3>' + esc(pretty(n)) + ' <span class="chip ' + lvl[0] + '">' + esc(lvl[1]) + "</span>" + (lvl[2] ? ' <span class="small">' + esc(lvl[2]) + "</span>" : "") + "</h3>" +
+    return '<div class="card item"><h3>' + esc(pretty(n)) + ' <span class="chip ' + safeCssClass(lvl[0], ["ok", "warn", "bad"]) + '">' + esc(lvl[1]) + "</span>" + (lvl[2] ? ' <span class="small">' + esc(lvl[2]) + "</span>" : "") + "</h3>" +
       kv("Bank balance", money(a.bank_balance)) + kv("YNAB balance", money(a.ynab_balance)) +
       kv("Difference", esc(direction(a.balance_difference))) +
       (a.expected_difference ? kv("Expected (front-loaded, in transit, awaiting Direct Import)", money(a.expected_difference)) : "") +
@@ -888,7 +888,7 @@ async function loadItems(force) {
     (d.items || []).forEach(function (it) { (it.nicknames || []).forEach(function (n) { state.items[n] = it; }); });
     $("items").innerHTML = (d.items || []).map(function (it) {
       var lvl = it.status === "needs_reauth" ? ["bad", "Needs reauth"] : it.status === "error" ? ["warn", "Connection error"] : it.status === "stale" ? ["warn", "No new bank data"] : it.status === "healthy" ? ["ok", "Healthy"] : ["", "Unknown"];
-      return '<div class="card item"><h3>' + esc(it.institution || (it.nicknames || []).map(pretty).join(", ")) + ' <span class="chip ' + lvl[0] + '">' + lvl[1] + '</span></h3><p class="small">' + esc((it.nicknames || []).map(pretty).join(", ")) + " · checked " + esc(ago(it.last_check)) + (it.last_bank_update ? " · bank data from " + esc(ago(it.last_bank_update)) : "") + (it.error ? " · " + esc(it.error) : "") + (it.alert_failed ? " · alert email failed, will retry" : "") + "</p></div>";
+      return '<div class="card item"><h3>' + esc(it.institution || (it.nicknames || []).map(pretty).join(", ")) + ' <span class="chip ' + safeCssClass(lvl[0], ["ok", "warn", "bad"]) + '">' + lvl[1] + '</span></h3><p class="small">' + esc((it.nicknames || []).map(pretty).join(", ")) + " · checked " + esc(ago(it.last_check)) + (it.last_bank_update ? " · bank data from " + esc(ago(it.last_bank_update)) : "") + (it.error ? " · " + esc(it.error) : "") + (it.alert_failed ? " · alert email failed, will retry" : "") + "</p></div>";
     }).join("") || '<div class="empty">No data yet. Click Check now.</div>';
   } catch (e) { /* non-fatal */ }
 }
