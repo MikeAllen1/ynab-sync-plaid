@@ -1,5 +1,6 @@
 import { normalizeMerchant } from "../sync/matching";
 import { Env } from "../types";
+import { CONFIG_UNREADABLE } from "../store/accounts";
 
 // ---------- Payee aliases ----------
 //
@@ -19,16 +20,32 @@ export const PAYEE_ALIASES_KV_KEY = "payee_aliases";
 export const DEFAULT_PAYEE_ALIASES: PayeeAlias[] = [];
 
 export async function getPayeeAliases(env: Env): Promise<PayeeAlias[]> {
-  try {
-    const raw = await env.SYNC_STATE.get(PAYEE_ALIASES_KV_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {
-    // fall through to defaults
+  let raw: string | null;
+  try { raw = await env.SYNC_STATE.get(PAYEE_ALIASES_KV_KEY); }
+  catch {
+    throw new Error(`${CONFIG_UNREADABLE}: saved payee aliases could not be read from SYNC_STATE. Sync was stopped rather than weakening duplicate detection.`);
   }
-  return DEFAULT_PAYEE_ALIASES;
+  if (raw === null) return DEFAULT_PAYEE_ALIASES;
+  let parsed: any;
+  try { parsed = JSON.parse(raw); }
+  catch {
+    throw new Error(`${CONFIG_UNREADABLE}: saved payee aliases contain invalid JSON. Repair them in Settings before syncing.`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${CONFIG_UNREADABLE}: saved payee aliases are not an array. Repair them in Settings before syncing.`);
+  }
+  const aliases: PayeeAlias[] = [];
+  for (const item of parsed) {
+    const canonical = typeof item?.canonical === "string" ? item.canonical.trim() : "";
+    const patterns = Array.isArray(item?.patterns)
+      ? item.patterns.filter((p: any) => typeof p === "string").map((p: string) => p.trim()).filter(Boolean)
+      : [];
+    if (!canonical || patterns.length === 0 || patterns.length !== (item?.patterns || []).length) {
+      throw new Error(`${CONFIG_UNREADABLE}: saved payee aliases contain an invalid entry. Repair them in Settings before syncing.`);
+    }
+    aliases.push({ canonical, patterns });
+  }
+  return aliases;
 }
 
 export async function putPayeeAliases(env: Env, aliases: any[]): Promise<PayeeAlias[]> {
