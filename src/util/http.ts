@@ -41,7 +41,13 @@ export async function readJsonBody(resp: Response): Promise<any> {
 }
 
 // The admin pages can't be framed by another site (click-jacking).
-export const NO_FRAMING = { "X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'" };
+export const NO_FRAMING = {
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+};
 
 // ---------- Security / utilities ----------
 
@@ -108,6 +114,6 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function json(body: any, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" }
   });
 }
