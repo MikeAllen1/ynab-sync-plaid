@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { acquireSyncLock, renewSyncLock } from "../src/lock/lock";
+import { acquireSyncLock, renewSyncLock, keepLeaseAlive, activeLeases, LEASE_RENEW_EVERY_MS } from "../src/lock/lock";
 import type { Env } from "../src/types";
 
 test("write lock fails closed when the Durable Object binding is missing", async () => {
@@ -53,4 +53,32 @@ test("a successful Durable Object lease renewal is accepted", async () => {
   await assert.doesNotReject(
     () => renewSyncLock(env, { id: "owner", mode: "durable-object" })
   );
+});
+
+test("a transient renewal failure does not suppress the next lease check", async () => {
+  let attempts = 0;
+  const env = {
+    SYNC_LOCK: {
+      idFromName: () => "global",
+      get: () => ({
+        fetch: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error("temporary Durable Object outage");
+          return Response.json({ renewed: true });
+        }
+      })
+    }
+  } as unknown as Env;
+  const lock = { id: "owner-retry", mode: "durable-object" as const };
+  const originalRenewedAt = Date.now() - LEASE_RENEW_EVERY_MS - 1000;
+  activeLeases.set(lock.id, { env, lock, renewedAt: originalRenewedAt });
+  try {
+    await assert.rejects(() => keepLeaseAlive(), /lease renewal failed/);
+    assert.equal(activeLeases.get(lock.id)?.renewedAt, originalRenewedAt, "failed renewal must not advance the throttle timestamp");
+    await keepLeaseAlive();
+    assert.equal(attempts, 2, "the next outbound operation must retry the renewal");
+    assert.ok((activeLeases.get(lock.id)?.renewedAt || 0) > originalRenewedAt);
+  } finally {
+    activeLeases.delete(lock.id);
+  }
 });

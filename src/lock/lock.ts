@@ -62,7 +62,6 @@ export async function keepLeaseAlive(): Promise<void> {
   const now = Date.now();
   for (const lease of activeLeases.values()) {
     if (now - lease.renewedAt < LEASE_RENEW_EVERY_MS) continue;
-    lease.renewedAt = now;
     await renewSyncLock(lease.env, lease.lock);
   }
 }
@@ -88,6 +87,8 @@ export async function renewSyncLock(env: Env, lock: LockHandle): Promise<void> {
   if (data?.renewed !== true) {
     throw new Error("SYNC_LOCK lease is no longer owned by this run; aborting financial writes.");
   }
+  const active = activeLeases.get(lock.id);
+  if (active) active.renewedAt = Date.now();
 }
 
 export async function releaseSyncLock(env: Env, lock: LockHandle): Promise<void> {
