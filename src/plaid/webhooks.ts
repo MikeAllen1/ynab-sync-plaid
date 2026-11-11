@@ -87,15 +87,14 @@ export async function verifyPlaidWebhook(env: Env, rawBody: string, verification
 }
 
 export async function getPlaidVerificationKey(env: Env, kid: string): Promise<any | null> {
-  // Bound attacker-triggerable KV reads before touching the cache. This is an
-  // isolate-local circuit breaker; Plaid key lookups have a separate tighter cap.
-  const nowMs = Date.now();
-  if (nowMs - whKeyReadWindow.start > 600000) {
-    whKeyReadWindow.start = nowMs;
-    whKeyReadWindow.count = 0;
-  }
-  if (whKeyReadWindow.count >= WH_KEY_READS_PER_WINDOW) return null;
-  whKeyReadWindow.count++;
+  // Enforce a global budget in the strongly consistent Durable Object before
+  // touching KV. Per-isolate counters can be bypassed by isolate churn.
+  if (!env.SYNC_LOCK) return null;
+  const budgetStub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const budgetResponse = await budgetStub.fetch("https://sync-lock/webhook/key-read", { method: "POST" });
+  if (!budgetResponse.ok) return null;
+  const budget: any = await budgetResponse.json();
+  if (budget.allowed !== true) return null;
 
   const cacheKey = `plaid_wh_key:${kid}`;
   const cached = await env.SYNC_STATE.get(cacheKey);
@@ -136,8 +135,6 @@ export async function getPlaidVerificationKey(env: Env, kid: string): Promise<an
   return null;
 }
 export const whKeyMisses = new Map<string, number>();
-export const whKeyReadWindow = { start: 0, count: 0 };
-export const WH_KEY_READS_PER_WINDOW = 1000;
 export const whLookupWindow = { start: 0, count: 0 };
 export const WH_KEY_LOOKUPS_PER_WINDOW = 5;
 
