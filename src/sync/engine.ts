@@ -610,9 +610,24 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     let hasMore = true;
     while (hasMore) {
       const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
-      added.push(...(resp.added || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      modified.push(...(resp.modified || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      for (const r of (resp.removed || [])) if (!r.account_id || r.account_id === pid) removedIds.add(r.transaction_id);
+      if (!resp || !Array.isArray(resp.added) || !Array.isArray(resp.modified) ||
+          !Array.isArray(resp.removed) || typeof resp.next_cursor !== "string" ||
+          typeof resp.has_more !== "boolean") {
+        throw new Error("Plaid /transactions/sync returned an invalid page: added, modified, removed, next_cursor and has_more are required");
+      }
+      const validTxn = (t: any) => t && typeof t.transaction_id === "string" &&
+        typeof t.account_id === "string" && typeof t.date === "string" &&
+        typeof t.amount === "number" && Number.isFinite(t.amount);
+      if (resp.added.some((t: any) => !validTxn(t)) || resp.modified.some((t: any) => !validTxn(t)) ||
+          resp.removed.some((t: any) => !t || typeof t.transaction_id !== "string")) {
+        throw new Error("Plaid /transactions/sync returned a malformed transaction");
+      }
+      if (resp.has_more && resp.next_cursor === cursor) {
+        throw new Error("Plaid /transactions/sync pagination cursor did not advance");
+      }
+      added.push(...resp.added.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
+      modified.push(...resp.modified.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
+      for (const removed of resp.removed) if (!removed.account_id || removed.account_id === pid) removedIds.add(removed.transaction_id);
       cursor = resp.next_cursor;
       hasMore = resp.has_more;
     }
