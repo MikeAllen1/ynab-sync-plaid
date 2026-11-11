@@ -63,6 +63,14 @@ test("a payment goes to the card it names; words beat a coincidental number", ()
   assert.equal(resolveCardForPayment(txn({ name: "CHASE CREDIT CRD EPAY", amount: 300 }), accts, [])?.nickname, "rewards-card");
   // Names a card number that isn't one of yours: not your card.
   assert.equal(resolveCardForPayment(txn({ name: "PAYMENT TO CHASE CARD ENDING IN 4455", amount: 300 }), accts, []), null);
+  // Two cards with the same last-four rule are ambiguous: never pick whichever
+  // happens to appear first in the account map.
+  const duplicateTail = { ...visa, nickname: "backup-card", plaid_account_id: "acct-backup", ynab_account_id: "ynab-backup" };
+  const ambiguous = txn({ name: "PAYMENT TO CARD ENDING IN 4321", amount: 300 });
+  assert.equal(resolveCardForPayment(ambiguous, [checking, visa, duplicateTail], []), null);
+  assert.equal(resolveCardForPayment(ambiguous, [checking, duplicateTail, visa], []), null);
+  // An explicit card name still disambiguates a coincidental shared number.
+  assert.equal(resolveCardForPayment(txn({ name: "CHASE SAPPHIRE PAYMENT 4321", amount: 300 }), [checking, visa, duplicateTail], [])?.nickname, "rewards-card");
 });
 
 test("payments to cards you don't track get a readable payee", () => {
