@@ -121,7 +121,7 @@ export const workerEntry = {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(env.ADMIN_TOKEN)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(`v1.${Math.floor(Date.now() / 1000)}.${env.ADMIN_TOKEN}`)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
           }
         });
       }
