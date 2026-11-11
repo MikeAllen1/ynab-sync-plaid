@@ -47,29 +47,45 @@ export const NO_FRAMING = { "X-Frame-Options": "DENY", "Content-Security-Policy"
 
 export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
 
-export function requireAdmin(req: Request, env: Env): Response | null {
+export async function createAdminSessionValue(adminToken: string): Promise<string> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(adminToken),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
+  const hex = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
+  return `v1.${issuedAt}.${hex}`;
+}
+
+export async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
   const headerToken = req.headers.get("x-admin-token");
   const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
     .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
-  let cookieToken = "";
+  let cookieValid = false;
   try {
     const decoded = cookieValue ? decodeURIComponent(cookieValue) : "";
-    const match = /^v1\.(\d+)\.(.*)$/.exec(decoded);
+    const match = /^v1\\.(\\d+)\\.([a-f0-9]{64})$/.exec(decoded);
     if (match) {
       const issuedAt = Number(match[1]);
       const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
-      // Enforce expiry server-side too; cookie Max-Age alone does not stop a
-      // copied cookie from being replayed after the browser would discard it.
-      if (Number.isSafeInteger(issuedAt) && ageSeconds >= 0 && ageSeconds <= 3600) cookieToken = match[2];
+      if (Number.isSafeInteger(issuedAt) && ageSeconds >= 0 && ageSeconds <= 3600 && env.ADMIN_TOKEN) {
+        const key = await crypto.subtle.importKey(
+          "raw", new TextEncoder().encode(env.ADMIN_TOKEN),
+          { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+        );
+        const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
+        const expected = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
+        cookieValid = constantTimeEqual(match[2], expected);
+      }
     }
-  } catch { cookieToken = ""; }
-  const provided = headerToken || cookieToken;
+  } catch { cookieValid = false; }
 
   if (!env.ADMIN_TOKEN) {
     return json({ error: "ADMIN_TOKEN is not configured. Run: npx wrangler secret put ADMIN_TOKEN" }, 500);
   }
 
-  if (!provided || !constantTimeEqual(provided, env.ADMIN_TOKEN)) {
+  if (!cookieValid && (!headerToken || !constantTimeEqual(headerToken, env.ADMIN_TOKEN))) {
     return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
   }
 
