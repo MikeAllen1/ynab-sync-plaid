@@ -65,7 +65,7 @@ test("a payment goes to the card it names; words beat a coincidental number", ()
   assert.equal(resolveCardForPayment(txn({ name: "PAYMENT TO CHASE CARD ENDING IN 4455", amount: 300 }), accts, []), null);
   // Two cards with the same last-four rule are ambiguous: never pick whichever
   // happens to appear first in the account map.
-  const duplicateTail = { ...visa, nickname: "backup-card", plaid_account_id: "acct-backup", ynab_account_id: "ynab-backup" };
+  const duplicateTail = { ...visa, nickname: "backup-card", plaid_account_id: "acct-backup", ynab_account_id: "ynab-backup", payment_match: { last4: ["4321"], words: [] } };
   const ambiguous = txn({ name: "PAYMENT TO CARD ENDING IN 4321", amount: 300 });
   assert.equal(resolveCardForPayment(ambiguous, [checking, visa, duplicateTail], []), null);
   assert.equal(resolveCardForPayment(ambiguous, [checking, duplicateTail, visa], []), null);
