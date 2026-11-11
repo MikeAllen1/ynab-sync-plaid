@@ -463,7 +463,21 @@ export const workerEntry = {
         const pending = await readJson(env, `pending_link:${body.link_id}`, null);
         if (!pending) return { ok: false, error: "That bank link expired (1 hour). Link the bank again." };
         const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
-        if (!nickname || !body.plaid_account_id || !body.ynab_account_id) return { ok: false, error: "nickname, plaid_account_id and ynab_account_id are required" };
+        const plaidAccountId = String(body.plaid_account_id || "").trim();
+        const ynabAccountId = String(body.ynab_account_id || "").trim();
+        if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(nickname) || !plaidAccountId || !ynabAccountId) {
+          return { ok: false, error: "Provide a valid nickname, Plaid account ID and YNAB account ID." };
+        }
+        if (typeof body.is_credit_card !== "boolean") return { ok: false, error: "is_credit_card must be a boolean." };
+        // Verify the selected Plaid account against the server-side pending Item.
+        const plaidAccounts = await plaidCall(env, "/accounts/get", { access_token: pending.access_token });
+        if (!(plaidAccounts.accounts || []).some((a: any) => a.account_id === plaidAccountId)) {
+          return { ok: false, error: "That Plaid account does not belong to the pending bank link." };
+        }
+        const ynabAccounts = await ynabGetAccounts(env);
+        if (!ynabAccounts.some((a: any) => a.id === ynabAccountId && !a.closed && !a.deleted)) {
+          return { ok: false, error: "Choose an active YNAB account from this budget." };
+        }
         const accounts = await getAccounts(env);
         if (accounts.some(a => a.nickname === nickname)) return { ok: false, error: `An account named ${nickname} already exists` };
         if (accounts.some(a => a.plaid_account_id === body.plaid_account_id)) return { ok: false, error: "That bank account is already mapped" };
@@ -471,8 +485,8 @@ export const workerEntry = {
           nickname,
           institution: String(body.institution || ""),
           plaid_access_token: pending.access_token,
-          plaid_account_id: body.plaid_account_id,
-          ynab_account_id: body.ynab_account_id,
+          plaid_account_id: plaidAccountId,
+          ynab_account_id: ynabAccountId,
           item_id: pending.item_id,
           is_credit_card: !!body.is_credit_card,
           // A card's own last 4 is how checking-side payments usually name it.
