@@ -21,7 +21,8 @@ function makeEnv(seed: Record<string, string> = {}) {
       try {
         return await fn({
           get: async (key: string) => data.get(key),
-          put: async (key: string, value: unknown) => { data.set(key, value); }
+          put: async (key: string, value: unknown) => { data.set(key, value); },
+          delete: async (key: string) => data.delete(key)
         });
       } finally { release(); }
     }
@@ -84,4 +85,19 @@ test("Durable Object rejects unknown history keys and oversized batches", async 
     method: "POST", body: JSON.stringify({ key: "webhook_history", items: Array(21).fill({}), initial: [] })
   });
   assert.equal(tooMany.status, 400);
+});
+
+test("concurrent lock acquisitions are serialized by a storage transaction", async () => {
+  const { env } = makeEnv();
+  const stub = env.SYNC_LOCK!.get(env.SYNC_LOCK!.idFromName("global"));
+  const [a, b] = await Promise.all([
+    stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>),
+    stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>)
+  ]);
+  assert.equal([a, b].filter(x => x.acquired).length, 1);
+  const holder = a.acquired ? a.id : b.id;
+  const wrongRelease = await stub.fetch("https://sync-lock/release?id=not-the-holder", { method: "POST" }).then(r => r.json() as Promise<any>);
+  assert.equal(wrongRelease.released, false);
+  const release = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(holder)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+  assert.equal(release.released, true);
 });
