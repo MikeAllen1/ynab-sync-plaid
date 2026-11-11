@@ -64,7 +64,9 @@ export const CARD_POSTED_PREFIX = "pcp:";
 // THANK YOU", "AUTOPAY PAYMENT - THANK YOU", "PAYMENT RECEIVED") is a payment
 // whatever category Plaid gave it; Plaid has labeled Amex thank-yous GENERAL_SERVICES
 // and INCOME.
-export const CARD_SIDE_PAYMENT_RE = /\bPAYMENT\b.*\bTHANK YOU\b|\bTHANK YOU\b.*\bPAYMENT\b|\bAUTO ?PAY(MENT)?\b|\bPAYMENT RECEIVED\b|\bAUTOMATIC PAYMENT\b|\b(MOBILE|ONLINE|INTERNET|ELECTRONIC) PAYMENT\b/;
+// Require wording that identifies a received card payment, not merely any
+// "automatic/mobile/online payment" descriptor (which can describe unrelated credits).
+export const CARD_SIDE_PAYMENT_RE = /\bPAYMENT\b.*\bTHANK YOU\b|\bTHANK YOU\b.*\bPAYMENT\b|\bPAYMENT RECEIVED\b|\bCREDIT CARD PAYMENT\b|\bCARD PAYMENT RECEIVED\b/;
 export function isCardPaymentFor(acct: AccountConfig, t: PlaidTransaction): boolean {
   if (isCreditCardAccount(acct)) {
     if (t.amount >= 0) return false;
