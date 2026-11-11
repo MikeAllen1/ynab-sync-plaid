@@ -148,6 +148,23 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Claim the exact signed body fingerprint in the strongly consistent Durable Object.
+ // Plaid's verification JWT has a short validity window but no stable event ID;
+ // hashing the signed body prevents duplicate deliveries from scheduling work twice.
+export async function claimPlaidWebhook(env: Env, rawBody: string): Promise<boolean> {
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for webhook replay protection");
+  const fingerprint = await sha256Hex(rawBody);
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/webhook/claim", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fingerprint })
+  });
+  if (!response.ok) throw new Error(`Webhook replay protection unavailable (${response.status})`);
+  const data: any = await response.json();
+  return data.claimed === true;
+}
+
 export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: ExecutionContext): Promise<any> {
   let body: any = {};
   try {
