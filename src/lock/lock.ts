@@ -8,11 +8,10 @@ import { json } from "../util/http";
 // repair, reset-card, account edits) runs under one global lock, so none of them can
 // act on a register snapshot another run is changing.
 //
-// Preferred: the SyncLock Durable Object (atomic, owner-tokened, renewable). If the
-// DO binding exists but can't be reached, the operation is SKIPPED rather than run
-// unprotected; cron retries in 15 minutes. Without a DO binding at all, a KV lock is
-// used, which is best-effort only (KV get-then-put is not atomic); that mode is
-// reported as lock_mode "kv-best-effort" so it is never mistaken for a real mutex.
+// Required: the SyncLock Durable Object (atomic, owner-tokened, renewable).
+// If the binding is absent or unreachable, the operation is skipped rather than
+// run unprotected; cron retries in 15 minutes. KV get-then-put is not atomic and
+// must never be used as a mutex for financial writes.
 export const SYNC_LOCK_KEY = "sync:lock";
 // Longer than any realistic run (three accounts, capped retries). Runs renew the
 // lease between accounts, so a slow run keeps its lock.
