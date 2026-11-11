@@ -4,20 +4,36 @@ import { Env } from "../types";
 
 // ---------- API clients ----------
 
-// Retry transient failures (429 rate limit, 5xx) with capped exponential backoff
-// + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
-// long — if a 429 won't clear within the cap, we give up and the next scheduled
-// run picks up where we left off (the sync is idempotent via import_id + cursor).
-export async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+// Retry only operations whose semantics are safe to replay. Plaid uses POST
+// for read operations, so callers must explicitly opt those endpoints in. YNAB
+// writes (POST/PATCH/DELETE) are never retried blindly: a timeout/5xx can occur
+// after the server committed the mutation.
+export async function fetchWithRetry(
+  url: string, init: RequestInit, retries = 2, options: { retrySafe?: boolean } = {}
+): Promise<Response> {
+  const method = String(init.method || "GET").toUpperCase();
+  const safeToRetry = options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
     const resp = await fetch(url, init);
-    if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      const retryAfter = Number(resp.headers.get("Retry-After"));
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(retryAfter * 1000, 10000)
+    if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
+      const header = resp.headers.get("Retry-After");
+      let requestedMs = 0;
+      if (header) {
+        const seconds = Number(header);
+        if (Number.isFinite(seconds) && seconds >= 0) requestedMs = seconds * 1000;
+        else {
+          const date = Date.parse(header);
+          if (Number.isFinite(date)) requestedMs = Math.max(0, date - Date.now());
+        }
+      }
+      const backoffMs = header
+        ? requestedMs
         : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+      // Do not shorten the provider's requested delay. Defer to the next scheduled
+      // execution when honoring it would exceed this worker's bounded retry window.
+      if (backoffMs > 10000) return resp;
       await sleep(backoffMs);
       attempt++;
       continue;
