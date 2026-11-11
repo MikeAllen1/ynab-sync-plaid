@@ -85,7 +85,13 @@ export async function ynabUpdateEach(env: Env, updates: any[]): Promise<{ update
   try {
     return { ...(await ynabUpdateTransactions(env, updates)), failed: [] };
   } catch (batchError: any) {
-    if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: String(batchError?.message || batchError) }] };
+    const message = String(batchError?.message || batchError);
+    // Row-by-row fallback is safe only when YNAB definitively rejected the batch
+    // as invalid. A timeout, 5xx, malformed success body, or other ambiguous result
+    // may mean the whole batch committed; replaying individual PATCHes could apply
+    // unintended second-stage changes.
+    if (!/^YNAB update failed: 400\\b/.test(message)) throw batchError;
+    if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: message }] };
   }
   let updated = 0;
   const failed: { id: string; error: string }[] = [];
