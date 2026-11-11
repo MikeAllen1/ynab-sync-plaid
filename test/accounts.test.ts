@@ -83,3 +83,18 @@ test("account nickname whitespace is normalized consistently before persistence"
   assert.equal(persisted[0].nickname, "checking-account");
   assert.ok(!persisted[0].nickname.includes(" "));
 });
+
+test("account store read failure does not fall back to a potentially stale environment seed", async () => {
+  const env = {
+    ACCOUNT_MAP: accountMap,
+    SYNC_STATE: {
+      get: async () => { throw new Error("simulated KV outage"); },
+      put: async () => {},
+      delete: async () => {}
+    }
+  } as unknown as Env;
+  await assert.rejects(
+    () => import("../src/store/accounts").then(m => m.getAccounts(env)),
+    /SYNC_STATE is unavailable.*No account sync was performed/
+  );
+});
