@@ -32,7 +32,7 @@ import { health, readJson } from "./health/status";
 import { isSyncEnabled, lockedJson } from "./lock/lock";
 import { plaidCall } from "./plaid/client";
 import { debugPlaidRawTransactions, resetRunCache } from "./plaid/fetch";
-import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshBeforeManualSync, verifyPlaidWebhook } from "./plaid/webhooks";
+import { claimPlaidWebhook, configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshBeforeManualSync, verifyPlaidWebhook } from "./plaid/webhooks";
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
@@ -188,7 +188,7 @@ export const workerEntry = {
         return json({ ok: false, error: "webhook verification failed" }, 401);
       }
 
-      const result = await handlePlaidWebhook(rawBody, env, ctx);
+      const firstDelivery = await claimPlaidWebhook(env, rawBody);\n      if (!firstDelivery) return json({ ok: true, duplicate: true, action: "already_processed" });\n\n      const result = await handlePlaidWebhook(rawBody, env, ctx);
       return json(result);
     }
 
