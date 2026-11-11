@@ -18,6 +18,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
   ]);
   const ynabRows: any[] = [];
   let failAfterCommit = true;
+  let failCursorCommit = false;
   const originalFetch = globalThis.fetch;
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
@@ -29,7 +30,13 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     TIMEZONE: "America/Chicago",
     SYNC_STATE: {
       get: async (key: string) => values.get(key) ?? null,
-      put: async (key: string, value: string) => { values.set(key, value); },
+      put: async (key: string, value: string) => {
+        if (key === "cursor:plaid-checking" && failCursorCommit) {
+          failCursorCommit = false;
+          throw new Error("simulated KV cursor commit failure");
+        }
+        values.set(key, value);
+      },
       delete: async (key: string) => { values.delete(key); }
     }
   } as unknown as Env;
@@ -39,15 +46,17 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     if (url.hostname === "production.plaid.com") {
       const body = JSON.parse(String(init?.body || "{}"));
       if (url.pathname === "/transactions/sync") {
+        const second = body.cursor === "cursor-next";
         return Response.json({
           added: [{
-            transaction_id: "plaid-tx-1", pending_transaction_id: null,
-            account_id: "plaid-checking", amount: 6.5, iso_currency_code: "USD",
-            date: "2026-11-10", authorized_date: null, name: "Coffee Shop",
-            merchant_name: "Coffee Shop", pending: false,
-            personal_finance_category: { primary: "FOOD_AND_DRINK", detailed: "FOOD_AND_DRINK_COFFEE" }
+            transaction_id: second ? "plaid-tx-2" : "plaid-tx-1", pending_transaction_id: null,
+            account_id: "plaid-checking", amount: second ? 8.75 : 6.5, iso_currency_code: "USD",
+            date: second ? "2026-11-11" : "2026-11-10", authorized_date: null,
+            name: second ? "Book Store" : "Coffee Shop",
+            merchant_name: second ? "Book Store" : "Coffee Shop", pending: false,
+            personal_finance_category: { primary: "GENERAL_MERCHANDISE", detailed: "GENERAL_MERCHANDISE_BOOKSTORES" }
           }],
-          modified: [], removed: [], next_cursor: "cursor-next", has_more: false
+          modified: [], removed: [], next_cursor: second ? "cursor-third" : "cursor-next", has_more: false
         });
       }
       if (url.pathname === "/accounts/get") {
@@ -73,7 +82,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
         const body = JSON.parse(String(init.body || "{}"));
         for (const row of body.transactions || []) {
           ynabRows.push({
-            id: "ynab-created-1", account_id: row.account_id, date: row.date,
+            id: "ynab-created-" + (ynabRows.length + 1), account_id: row.account_id, date: row.date,
             amount: row.amount, payee_name: row.payee_name || "Coffee Shop",
             cleared: row.cleared, import_id: row.import_id,
             transfer_transaction_id: null
@@ -110,6 +119,23 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     const undo = JSON.parse(values.get("undo_log") || "[]");
     assert.ok(undo.some((batch: any) => batch.items?.some((item: any) => item.id === "ynab-created-1")), "the committed row must be recorded for undo");
     assert.equal(ynabRows.length, 1, "recovery must not create a duplicate");
+
+    // A later run successfully writes another row, then KV rejects the cursor
+    // commit. Replaying that Plaid page must match the existing import id.
+    failCursorCommit = true;
+    resetRunCache();
+    await assert.rejects(
+      syncAccountEngine(env, account, [], { trigger: "cursor-fault", runId: "run-fault-3" }),
+      /simulated KV cursor commit failure/
+    );
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-next");
+    assert.equal(ynabRows.length, 2, "the second YNAB create committed before the cursor failure");
+
+    resetRunCache();
+    const cursorRecovered = await syncAccountEngine(env, account, [], { trigger: "cursor-recovery", runId: "run-fault-4" });
+    assert.equal(cursorRecovered.status, "ok");
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-third");
+    assert.equal(ynabRows.length, 2, "replaying after cursor persistence failure must not duplicate the row");
   } finally {
     globalThis.fetch = originalFetch;
     resetRunCache();
