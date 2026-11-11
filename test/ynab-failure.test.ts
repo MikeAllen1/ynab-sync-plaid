@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ynabDeleteTransaction, ynabUpdateEach } from "../src/ynab/client";
+import { ynabDeleteTransaction, ynabUpdateEach, ynabUpdateTransactions } from "../src/ynab/client";
 import type { Env } from "../src/types";
 
 const env = { YNAB_TOKEN: "test-token", YNAB_BUDGET_ID: "test-budget" } as Env;
@@ -35,5 +35,16 @@ test("YNAB delete treats 404 as already deleted but surfaces service failures", 
     assert.deepEqual(await ynabDeleteTransaction(env, "already-gone"), { already_deleted: true });
     globalThis.fetch = async () => Response.json({ error: "temporarily unavailable" }, { status: 503 });
     await assert.rejects(ynabDeleteTransaction(env, "retry-later"), /YNAB transaction delete failed: 503/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("YNAB malformed 2xx update response is not reported as a successful zero-row update", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ data: {} });
+  try {
+    await assert.rejects(
+      ynabUpdateTransactions(env, [{ id: "row-1", cleared: "cleared" }]),
+      /invalid success response.*transaction_ids/
+    );
   } finally { globalThis.fetch = originalFetch; }
 });
