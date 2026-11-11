@@ -12,9 +12,8 @@ export interface Env {
 
   SYNC_STATE: KVNamespace;
 
-  // Optional. Durable Object namespace backing the atomic sync mutex. When bound
-  // (via wrangler.toml), acquireSyncLock uses a strongly-consistent DO lock; when
-  // absent, it falls back to the KV lock. Either way the callers are unchanged.
+  // Durable Object namespace backing the atomic sync mutex and transactional
+  // diagnostic-history appends. Financial writes fail closed when it is absent.
   SYNC_LOCK?: DurableObjectNamespace;
 
   // Optional. If set, the Worker POSTs a JSON alert here when sync health
