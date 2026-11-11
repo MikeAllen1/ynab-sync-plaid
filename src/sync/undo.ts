@@ -25,15 +25,20 @@ export interface UndoBatch {
 }
 
 export async function getUndoLog(env: Env): Promise<UndoBatch[]> {
+  if (env.SYNC_LOCK) {
+    try {
+      const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+      const response = await stub.fetch(`https://sync-lock/history/get?key=${UNDO_LOG_KV_KEY}`);
+      if (response.ok) {
+        const data: any = await response.json();
+        if (Array.isArray(data.items)) return data.items as UndoBatch[];
+      }
+    } catch { /* legacy read is a dashboard/recovery fallback only */ }
+  }
   try {
     const raw = await env.SYNC_STATE.get(UNDO_LOG_KV_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {
-    // ignore
-  }
+    if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return parsed; }
+  } catch { /* caller sees empty legacy history; append still fails closed without DO */ }
   return [];
 }
 
@@ -41,15 +46,17 @@ export async function getUndoLog(env: Env): Promise<UndoBatch[]> {
 // later (an update refused, a timeout) can be undone. Accounts in the same run share
 // one entry.
 export async function appendUndo(env: Env, runId: string, trigger: string, items: UndoBatch["items"]): Promise<void> {
-  const existing = await getUndoLog(env);
-  const head = existing[0];
-  if (head && head.run_id === runId) {
-    head.items.push(...items);
-    head.count = head.items.length;
-  } else {
-    existing.unshift({ ts: new Date().toISOString(), trigger, run_id: runId, count: items.length, items });
-  }
-  await env.SYNC_STATE.put(UNDO_LOG_KV_KEY, JSON.stringify(existing.slice(0, UNDO_LOG_MAX)));
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for atomic undo history writes");
+  const batch: UndoBatch = { ts: new Date().toISOString(), trigger, run_id: runId, count: items.length, items };
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const raw = await env.SYNC_STATE.get(UNDO_LOG_KV_KEY);
+  let initial: UndoBatch[] = [];
+  if (raw) { try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) initial = parsed.slice(0, UNDO_LOG_MAX); } catch { /* corrupt legacy log is not trusted */ } }
+  const response = await stub.fetch("https://sync-lock/history/append", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: UNDO_LOG_KV_KEY, items: [batch], initial })
+  });
+  if (!response.ok) throw new Error(`Atomic undo history append failed (${response.status})`);
 }
 
 // Undo endpoint. Safe by default:
@@ -144,7 +151,13 @@ export async function rollbackSync(env: Env, url: URL): Promise<any> {
   if (at >= 0) {
     if (leftover.length) fresh[at] = { ...fresh[at], items: leftover, count: leftover.length };
     else fresh.splice(at, 1);
-    await env.SYNC_STATE.put(UNDO_LOG_KV_KEY, JSON.stringify(fresh));
+    if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for atomic undo history updates");
+    const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+    const response = await stub.fetch("https://sync-lock/history/replace", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: UNDO_LOG_KV_KEY, items: fresh.slice(0, UNDO_LOG_MAX) })
+    });
+    if (!response.ok) throw new Error(`Atomic undo history update failed (${response.status})`);
   }
 
   return { ok: errors.length === 0, undone: true, target_ts: batch.ts, trigger: batch.trigger, requested: deletable.length, deleted, kept, errors };
