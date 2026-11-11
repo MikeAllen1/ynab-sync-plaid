@@ -90,10 +90,11 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
   }
   stored.forEach(a => { byNick[a.nickname] = a; });
   const merged: AccountConfig[] = incoming.map((a: any) => {
-    const prev = byNick[a.nickname] || ({} as AccountConfig);
+    const nickname = String(a.nickname).trim().toLowerCase().replace(/\\s+/g, "-");
+    const prev = byNick[nickname] || ({} as AccountConfig);
     const token = (a.plaid_access_token && String(a.plaid_access_token).trim()) ? String(a.plaid_access_token).trim() : prev.plaid_access_token;
     return {
-      nickname: a.nickname,
+      nickname,
       institution: a.institution ?? prev.institution ?? "",
       plaid_access_token: token,
       plaid_account_id: a.plaid_account_id ?? prev.plaid_account_id ?? "",
