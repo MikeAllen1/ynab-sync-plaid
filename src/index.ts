@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, fetchWithRetry, json, readJsonBody, requireAdmin, revokeAdminSession } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
 
 
@@ -117,7 +117,7 @@ export const workerEntry = {
         if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
         const supplied = req.headers.get("x-admin-token") || "";
         if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
-        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
+        const sessionValue = await createAdminSessionValue(env);
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
@@ -132,6 +132,9 @@ export const workerEntry = {
         return json({ ok: true });
       }
       if (req.method === "DELETE") {
+        const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
+          .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
+        if (cookieValue) await revokeAdminSession(env, decodeURIComponent(cookieValue));
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
