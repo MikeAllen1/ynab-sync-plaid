@@ -974,8 +974,8 @@ async function saveAccounts() {
 </body>
 </html>`;
 
-  const securedHtml = html.replace(/<script(?![^>]*\\bnonce=)/gi, '<script nonce="' + nonce + '"')
-    .replace(/<style(?![^>]*\\bnonce=)/gi, '<style nonce="' + nonce + '"');
+  const securedHtml = html.replace(/<script(?![^>]*\bnonce=)/gi, '<script nonce="' + nonce + '"')
+    .replace(/<style(?![^>]*\bnonce=)/gi, '<style nonce="' + nonce + '"');
   return new Response(securedHtml, {
     headers: {
       "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
