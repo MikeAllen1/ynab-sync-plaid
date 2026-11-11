@@ -76,6 +76,6 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function json(body: any, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "Content-Type": "application/json" }
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
   });
 }
