@@ -302,8 +302,10 @@ export const workerEntry = {
 
       if (req.method === "POST") {
         const body: any = await req.json();
-        const rules = await putSkipRules(env, body.rules || []);
-        return json({ ok: true, rules });
+        return lockedJson(env, async () => {
+          const rules = await putSkipRules(env, body.rules || []);
+          return { ok: true, rules };
+        });
       }
 
       return json({ error: "method not allowed" }, 405);
@@ -313,8 +315,10 @@ export const workerEntry = {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      await env.SYNC_STATE.delete("skip_rules");
-      return json({ ok: true, rules: DEFAULT_SKIP_RULES });
+      return lockedJson(env, async () => {
+        await env.SYNC_STATE.delete("skip_rules");
+        return { ok: true, rules: DEFAULT_SKIP_RULES };
+      });
     }
 
     // NEW: Payee aliases — declare that differently-named transactions are the same
@@ -325,7 +329,7 @@ export const workerEntry = {
       if (req.method === "GET") return json({ labels: await getTransferLabels(env) });
       if (req.method === "POST") {
         const body: any = await req.json();
-        return json({ ok: true, labels: await putTransferLabels(env, body.labels || []) });
+        return lockedJson(env, async () => ({ ok: true, labels: await putTransferLabels(env, body.labels || []) }));
       }
       return json({ error: "method not allowed" }, 405);
     }
@@ -338,8 +342,10 @@ export const workerEntry = {
 
       if (req.method === "POST") {
         const body: any = await req.json();
-        const aliases = await putPayeeAliases(env, body.aliases || []);
-        return json({ ok: true, aliases });
+        return lockedJson(env, async () => {
+          const aliases = await putPayeeAliases(env, body.aliases || []);
+          return { ok: true, aliases };
+        });
       }
 
       return json({ error: "method not allowed" }, 405);
