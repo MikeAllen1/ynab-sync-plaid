@@ -52,7 +52,17 @@ export function requireAdmin(req: Request, env: Env): Response | null {
   const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
     .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
   let cookieToken = "";
-  try { cookieToken = cookieValue ? decodeURIComponent(cookieValue) : ""; } catch { cookieToken = ""; }
+  try {
+    const decoded = cookieValue ? decodeURIComponent(cookieValue) : "";
+    const match = /^v1\\.(\\d+)\\.(.*)$/.exec(decoded);
+    if (match) {
+      const issuedAt = Number(match[1]);
+      const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
+      // Enforce expiry server-side too; cookie Max-Age alone does not stop a
+      // copied cookie from being replayed after the browser would discard it.
+      if (Number.isSafeInteger(issuedAt) && ageSeconds >= 0 && ageSeconds <= 3600) cookieToken = match[2];
+    }
+  } catch { cookieToken = ""; }
   const provided = headerToken || cookieToken;
 
   if (!env.ADMIN_TOKEN) {
