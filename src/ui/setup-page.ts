@@ -48,6 +48,7 @@ export function setupHtml(): string {
 
 <script>
 var tokenInput = document.getElementById("token");
+sessionStorage.removeItem("ynab_sync_admin_token");
 tokenInput.addEventListener("change", authenticate);
 async function authenticate() {
   var value = tokenInput.value.trim();
