@@ -111,7 +111,35 @@ export const workerEntry = {
       // Read the raw body exactly once. We need the unparsed bytes to verify
       // Plaid's signature (it signs a SHA-256 of the raw body), and we reuse the
       // same string for parsing so there's no chance of a mismatch.
-      const rawBody = await req.text();
+      // Plaid signs the exact raw body. Enforce a strict byte limit while
+      // streaming so an oversized unauthenticated request cannot be fully buffered.
+      const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+      const declaredLength = Number(req.headers.get("Content-Length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_WEBHOOK_BODY_BYTES) {
+        return json({ ok: false, error: "webhook payload too large" }, 413);
+      }
+      if (!req.body) return json({ ok: false, error: "webhook body required" }, 400);
+      const reader = req.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          totalBytes += part.value.byteLength;
+          if (totalBytes > MAX_WEBHOOK_BODY_BYTES) {
+            await reader.cancel();
+            return json({ ok: false, error: "webhook payload too large" }, 413);
+          }
+          chunks.push(part.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      const bodyBytes = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) { bodyBytes.set(chunk, offset); offset += chunk.byteLength; }
+      const rawBody = new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes);
       const verification = req.headers.get("Plaid-Verification");
       const verified = await verifyPlaidWebhook(env, rawBody, verification);
 
