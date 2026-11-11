@@ -139,7 +139,7 @@ export async function healthReport(env: Env): Promise<any> {
     last_alert_failure: lastAlertFailure,
     // "durable-object" is a real mutex. "kv-best-effort" means the SYNC_LOCK binding
     // is missing from wrangler.toml and overlapping runs are only mostly prevented.
-    lock_mode: env.SYNC_LOCK ? "durable-object" : "kv-best-effort",
+    lock_mode: env.SYNC_LOCK ? "durable-object" : "missing-required-binding",
     worker_version: WORKER_VERSION,
     status: statusReport
   };
