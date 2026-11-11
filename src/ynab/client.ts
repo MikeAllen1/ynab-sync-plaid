@@ -29,12 +29,16 @@ export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Pro
   if (!resp.ok) {
     throw new Error(`YNAB upsert failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
+  if (!data?.data || !Array.isArray(data.data.transaction_ids) ||
+      !Array.isArray(data.data.duplicate_import_ids)) {
+    throw new Error("YNAB upsert returned an invalid success response; transaction_ids and duplicate_import_ids are required");
+  }
 
   return {
-    added: data.data?.transaction_ids?.length || 0,
-    duplicates: data.data?.duplicate_import_ids?.length || 0,
-    created_ids: data.data?.transaction_ids || [],
-    duplicate_import_ids: data.data?.duplicate_import_ids || []
+    added: data.data.transaction_ids.length,
+    duplicates: data.data.duplicate_import_ids.length,
+    created_ids: data.data.transaction_ids,
+    duplicate_import_ids: data.data.duplicate_import_ids
   };
 }
 
@@ -109,7 +113,10 @@ export async function ynabGetAccountsUncached(env: Env): Promise<YNABAccountSumm
     throw new Error(`YNAB accounts failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
 
-  return data.data?.accounts || [];
+  if (!data?.data || !Array.isArray(data.data.accounts)) {
+    throw new Error("YNAB accounts returned an invalid success response: data.accounts is required");
+  }
+  return data.data.accounts;
 }
 
 export async function ynabGetTransaction(env: Env, id: string): Promise<YNABExistingTransaction | null> {
@@ -142,7 +149,10 @@ export async function ynabGetAccountTransactions(env: Env, ynabAccountId: string
     throw new Error(`YNAB account transactions failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
 
-  return data.data?.transactions || [];
+  if (!data?.data || !Array.isArray(data.data.transactions)) {
+    throw new Error("YNAB account transactions returned an invalid success response: data.transactions is required");
+  }
+  return data.data.transactions;
 }
 
 export interface YNABAccountBalances {
