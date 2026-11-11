@@ -44,7 +44,9 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
     }
   } catch (e: any) {
     if (String(e?.message || "").startsWith(CONFIG_UNREADABLE)) throw e;
-    // KV read itself failed: fall through to env seed
+    // The env var is only a first-deploy seed. If KV is unavailable after the
+    // worker has been configured, it may be stale; never silently sync against it.
+    throw new Error("SYNC_STATE is unavailable; refusing to use the potentially stale ACCOUNT_MAP seed. No account sync was performed.");
   }
   try {
     const seed = JSON.parse(env.ACCOUNT_MAP || "[]");
