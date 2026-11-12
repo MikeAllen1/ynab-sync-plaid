@@ -337,7 +337,7 @@ export async function maybeSendHealthAlert(env: Env, summary: any, errors: any[]
   // "last state sent", so both are used when both are set, and a failure on one never
   // makes the other send twice. Email has always tracked "last_alert_state" when it
   // was the only channel; it keeps that key in that case so a deploy sends nothing new.
-  const hasEmail = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
+  const hasEmail = !!env.RESEND_API_KEY && !!env.ALERT_EMAIL_TO;
   const hasWebhook = !!env.ALERT_WEBHOOK_URL;
   const emailStateKey = hasWebhook ? "last_alert_state_email" : "last_alert_state";
 
@@ -365,19 +365,19 @@ async function sendChannelAlert(
     // Syncs failing, and the recovery after that, are emailed. Warnings stay on the
     // dashboard so the inbox isn't noisy. The state is recorded only once the email
     // went out (or there was nothing to send), so a failed email is retried next run.
-    const apiKey = (env as any).RESEND_API_KEY, to = (env as any).ALERT_EMAIL_TO;
+    const apiKey = env.RESEND_API_KEY, to = env.ALERT_EMAIL_TO;
     const emailWorthy = currentState === "error" || prevState === "error";
     if (!emailWorthy) { await env.SYNC_STATE.put(prevKeyName, stateKey); return; }
     const first = alertErrors[0] || {};
     const subject = currentState === "error" ? "⚠️ YNAB sync is failing" : "✅ YNAB sync recovered";
-    const origin = (env as any).WORKER_ORIGIN || "https://<your-worker>.workers.dev";
+    const origin = env.WORKER_ORIGIN || "https://<your-worker>.workers.dev";
     const text = currentState === "error"
       ? `Your YNAB sync failed: ${first.friendly_error || first.error || "sync error"}${first.account ? ` (${prettyNickname(first.account)})` : ""}.\n\nThe dashboard has the details:\n${origin}/dashboard`
       : `Your YNAB sync is working again.${currentState === "warning" ? " The dashboard has a warning to look at." : ""}\n${origin}/dashboard`;
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST", headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from: (env as any).ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>", to: [to], subject, text })
+        body: JSON.stringify({ from: env.ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>", to: [to], subject, text })
       });
       if (!resp.ok) throw new Error(`Resend refused the email (${resp.status})`);
       await env.SYNC_STATE.put(prevKeyName, stateKey);

@@ -491,7 +491,7 @@ export const workerEntry = {
       try {
         const body = await req.json() as any;
         const clientUserId = body.client_user_id || `setup-${Date.now()}`;
-        const redirectUri = (env as any).PLAID_REDIRECT_URI || `${url.origin}/setup`;
+        const redirectUri = env.PLAID_REDIRECT_URI || `${url.origin}/setup`;
 
         // Reconnect (update) mode: when a nickname is supplied we look up that bank's
         // stored access_token server-side and create an UPDATE-mode link token. This
@@ -507,7 +507,7 @@ export const workerEntry = {
           // Register the webhook on the Item from the moment it's created (and re-point
           // it on a reconnect), so a new bank gets push updates without a separate
           // "Re-register webhooks" step.
-          webhook: `${(env as any).WORKER_ORIGIN || url.origin}/webhook`
+          webhook: `${env.WORKER_ORIGIN || url.origin}/webhook`
         };
         if (body.nickname) {
           const acct = (await getAccounts(env)).find((a: any) => a.nickname === body.nickname);
@@ -839,13 +839,13 @@ export const workerEntry = {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      const configured = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
+      const configured = !!env.RESEND_API_KEY && !!env.ALERT_EMAIL_TO;
       if (!configured) {
         return json({
           ok: false,
           error: "Not configured. Set RESEND_API_KEY and ALERT_EMAIL_TO secrets first.",
-          have_api_key: !!(env as any).RESEND_API_KEY,
-          have_to_address: !!(env as any).ALERT_EMAIL_TO
+          have_api_key: !!env.RESEND_API_KEY,
+          have_to_address: !!env.ALERT_EMAIL_TO
         }, 400);
       }
       try {

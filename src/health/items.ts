@@ -303,11 +303,11 @@ export async function runItemHealthCheck(env: Env, force = false): Promise<Recor
 // Optional: ALERT_EMAIL_FROM (defaults to Resend's onboarding sender, which works
 // for sending to your own verified address without domain setup).
 export async function sendConnectionAlert(env: Env, broken: ItemHealth[]): Promise<void> {
-  const apiKey = (env as any).RESEND_API_KEY;
-  const to = (env as any).ALERT_EMAIL_TO;
+  const apiKey = env.RESEND_API_KEY;
+  const to = env.ALERT_EMAIL_TO;
   if (!apiKey || !to) return; // not configured yet -> silently skip
-  const from = (env as any).ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>";
-  const origin = (env as any).WORKER_ORIGIN || "https://<your-worker>.workers.dev";
+  const from = env.ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>";
+  const origin = env.WORKER_ORIGIN || "https://<your-worker>.workers.dev";
 
   const what = (h: ItemHealth) => h.status === "needs_reauth" ? "needs to be reconnected"
     : h.status === "stale" ? `hasn't sent new data since ${h.last_bank_update ? h.last_bank_update.slice(0, 10) : "a while"}`

@@ -39,5 +39,6 @@ TIMEZONE = "America/New_York"       # your IANA time zone, for day boundaries
 # Optional email alerts (https://resend.com):
 #   npx wrangler secret put RESEND_API_KEY
 #   npx wrangler secret put ALERT_EMAIL_TO
+#   ALERT_EMAIL_FROM (optional, a [vars] entry or secret): sender, e.g. "YNAB Sync <alerts@yourdomain>"
 # Optional JSON webhook alerts:
 #   npx wrangler secret put ALERT_WEBHOOK_URL
