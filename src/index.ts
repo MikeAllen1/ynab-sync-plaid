@@ -38,6 +38,7 @@ import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
 import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountConfiguration, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
+import { withDurableAccountState } from "./store/durable-state";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
 import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
@@ -61,6 +62,9 @@ export const workerEntry = {
   // instead of an unhandled exception.
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     resetRunCache();
+    // Per-account sync state lives in the SyncLock Durable Object (strongly
+    // consistent, like the lock that guards it); see store/durable-state.ts.
+    env = withDurableAccountState(env);
     try {
       return await workerEntry.routeFetch(req, env, ctx);
     } catch (e: any) {
@@ -72,6 +76,7 @@ export const workerEntry = {
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     resetRunCache();
+    env = withDurableAccountState(env);
     // Ask Plaid to re-poll the bank, but only for bank logins that have an enabled
     // account due to sync, and never while globally paused. When Plaid finds new data
     // it sends SYNC_UPDATES_AVAILABLE, and that webhook syncs the item's accounts

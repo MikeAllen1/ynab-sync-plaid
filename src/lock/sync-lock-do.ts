@@ -1,4 +1,5 @@
 import { SYNC_LOCK_TTL_SECONDS } from "./lock";
+import { isDurableStateKey } from "../store/durable-state";
 
 // One strongly-consistent Durable Object owns both the global financial-write
 // mutex and the small bounded diagnostic histories. KV read/modify/write is not
@@ -122,6 +123,59 @@ export class SyncLock {
       return Response.json({ items: Array.isArray(stored) ? stored : null });
     }
 
+
+    // Per-account sync state (see store/durable-state.ts). Values are strings, stored
+    // under "state:<key>" with an optional expiry; only allowlisted prefixes are taken.
+    if (url.pathname.startsWith("/state/")) {
+      const okKey = (k: unknown) => typeof k === "string" && k.length <= 512 && isDurableStateKey(k);
+      const live = (v: any) => v && typeof v.value === "string" && (!v.expires_at || v.expires_at > now);
+      if (url.pathname === "/state/migrated" && request.method === "GET") {
+        return Response.json({ migrated: (await this.state.storage.get("state_migrated")) === true });
+      }
+      if (url.pathname === "/state/get" && request.method === "GET") {
+        const key = url.searchParams.get("key") || "";
+        if (!okKey(key)) return Response.json({ error: "invalid state key" }, { status: 400 });
+        const v: any = await this.state.storage.get(`state:${key}`);
+        return Response.json({ value: live(v) ? v.value : null });
+      }
+      let body: any;
+      try {
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).byteLength > 1900 * 1024) return Response.json({ error: "state payload too large" }, { status: 413 });
+        body = JSON.parse(raw);
+      } catch { return Response.json({ error: "invalid state payload" }, { status: 400 }); }
+      if (url.pathname === "/state/put" && request.method === "POST") {
+        if (!okKey(body?.key) || typeof body?.value !== "string") return Response.json({ error: "invalid state put" }, { status: 400 });
+        const ttl = Number(body.ttl_seconds);
+        await this.state.storage.put(`state:${body.key}`, { value: body.value, expires_at: Number.isFinite(ttl) && ttl > 0 ? now + ttl * 1000 : null });
+        return Response.json({ ok: true });
+      }
+      if (url.pathname === "/state/delete" && request.method === "POST") {
+        if (!okKey(body?.key)) return Response.json({ error: "invalid state delete" }, { status: 400 });
+        await this.state.storage.delete(`state:${body.key}`);
+        return Response.json({ ok: true });
+      }
+      if (url.pathname === "/state/import" && request.method === "POST") {
+        const entries = Array.isArray(body?.entries) ? body.entries : null;
+        if (!entries || entries.length > 200) return Response.json({ error: "invalid state import" }, { status: 400 });
+        const result = await this.state.storage.transaction(async txn => {
+          // Once migrated, the Durable Object is the only source: a late import from a
+          // slower isolate must not bring back values a run has since changed.
+          if ((await txn.get("state_migrated")) === true) return { imported: 0, already_migrated: true };
+          let imported = 0;
+          for (const e of entries) {
+            if (!Array.isArray(e) || !okKey(e[0]) || typeof e[1] !== "string") continue;
+            if ((await txn.get(`state:${e[0]}`)) !== undefined) continue;
+            await txn.put(`state:${e[0]}`, { value: e[1], expires_at: null });
+            imported++;
+          }
+          if (body.mark_migrated === true) await txn.put("state_migrated", true);
+          return { imported, already_migrated: false };
+        });
+        return Response.json({ ok: true, ...result });
+      }
+      return new Response("not found", { status: 404 });
+    }
 
     if (url.pathname === "/ynab-rate/reserve" && request.method === "POST") {
       // YNAB documents a 200-request/hour token limit. Keep this worker below it
