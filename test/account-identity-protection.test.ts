@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { saveAccountsMerged } from "../src/store/accounts";
+import { migratePlaidAccountIdentity, saveAccountsMerged } from "../src/store/accounts";
 
 function envWithAccount() {
   const values = new Map<string, string>([["account_map", JSON.stringify([{
@@ -9,7 +9,7 @@ function envWithAccount() {
     plaid_account_id: "plaid-old",
     ynab_account_id: "ynab-account",
     item_id: "item-1"
-  }])]]);
+  }])], ["cursor:plaid-old", "old-cursor"]]);
   return {
     SYNC_STATE: {
       get: async (key: string) => values.get(key) ?? null,
@@ -54,4 +54,27 @@ test("account mapping refuses silent YNAB destination changes", async () => {
     }]),
     /YNAB destination changed/
   );
+});
+
+test("explicit Plaid identity migration retains old cursor state and keeps the YNAB destination", async () => {
+  const env = envWithAccount();
+  const result = await migratePlaidAccountIdentity(env, "checking", "new-token", "plaid-new", "item-2", "ynab-account");
+  const saved = JSON.parse((await env.SYNC_STATE.get("account_map"))!);
+  assert.equal(saved[0].plaid_account_id, "plaid-new");
+  assert.equal(saved[0].plaid_access_token, "new-token");
+  assert.equal(saved[0].ynab_account_id, "ynab-account");
+  assert.equal(await env.SYNC_STATE.get("cursor:plaid-old"), "old-cursor");
+  assert.equal(await env.SYNC_STATE.get("cursor:plaid-new"), null);
+  const history = JSON.parse((await env.SYNC_STATE.get("account_migration:" + result.migration_id))!);
+  assert.equal(history.status, "committed");
+});
+
+test("explicit Plaid identity migration refuses a new ID with existing sync state", async () => {
+  const env = envWithAccount();
+  await env.SYNC_STATE.put("cursor:plaid-new", "existing-cursor");
+  await assert.rejects(
+    migratePlaidAccountIdentity(env, "checking", "new-token", "plaid-new", "item-2", "ynab-account"),
+    /already has saved sync state/
+  );
+  assert.equal(JSON.parse((await env.SYNC_STATE.get("account_map"))!)[0].plaid_account_id, "plaid-old");
 });
