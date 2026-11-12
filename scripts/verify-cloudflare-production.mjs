@@ -57,12 +57,13 @@ async function live(path, options = {}) {
 
 try {
   const scriptPath = "/accounts/" + accountId + "/workers/scripts/" + encodeURIComponent(workerName);
-  const [settings, secrets, namespaces, kvNamespaces, deployments, tokenStatus] = await Promise.all([
+  const [settings, secrets, namespaces, kvNamespaces, deployments, schedules, tokenStatus] = await Promise.all([
     cf(scriptPath + "/settings"),
     cf(scriptPath + "/secrets"),
     cf("/accounts/" + accountId + "/workers/durable_objects/namespaces?per_page=1000"),
     cf("/accounts/" + accountId + "/storage/kv/namespaces?per_page=1000"),
     cf(scriptPath + "/deployments"),
+    cf(scriptPath + "/schedules"),
     (async () => {
       try { return await cf("/user/tokens/verify"); }
       catch { return await cf("/accounts/" + accountId + "/tokens/verify"); }
@@ -99,6 +100,10 @@ try {
   const deployedVersions = Array.isArray(deployments) ? deployments : deployments?.deployments;
   if (Array.isArray(deployedVersions) && deployedVersions.length > 0) pass("Cloudflare reports at least one deployed Worker version");
   else fail("No Worker deployment version was returned");
+
+  const cronSchedules = schedules?.schedules || [];
+  if (cronSchedules.some(schedule => schedule.cron === "*/15 * * * *")) pass("Expected 15-minute production Cron Trigger is configured");
+  else fail("Expected production Cron Trigger (*/15 * * * *) is missing");
 
   const dashboard = await live("/dashboard");
   const dashboardCsp = dashboard.headers.get("content-security-policy") || "";
