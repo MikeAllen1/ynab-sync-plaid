@@ -162,6 +162,18 @@ export async function putItemHealth(env: Env, health: Record<string, ItemHealth>
 // (weekends included) means the connection has quietly stopped.
 export const BANK_DATA_STALE_DAYS = 3;
 
+/**
+ * Pull Plaid's error_code out of a plaidCall error. plaidCall reports
+ * `Plaid /path failed: {"error_code":"ITEM_LOGIN_REQUIRED",...}`; older messages used
+ * `...: ITEM_LOGIN_REQUIRED - message`. Anything else is UNKNOWN.
+ */
+export function plaidErrorCode(message: string): string {
+  const json = message.match(/"error_code"\s*:\s*"([A-Z0-9_]+)"/);
+  if (json) return json[1];
+  const legacy = message.match(/:\s*([A-Z][A-Z0-9_]+)\s*-/);
+  return legacy ? legacy[1] : "UNKNOWN";
+}
+
 export function itemStatusFromError(errorCode: string): "needs_reauth" | "error" {
   const reauth = ["ITEM_LOGIN_REQUIRED", "INVALID_ACCESS_TOKEN", "INVALID_CREDENTIALS", "ITEM_LOCKED", "USER_PERMISSION_REVOKED", "PENDING_EXPIRATION"];
   return reauth.includes(errorCode) ? "needs_reauth" : "error";
@@ -236,8 +248,7 @@ export async function runItemHealthCheck(env: Env, force = false): Promise<Recor
       }
     } catch (e: any) {
       const msg = String(e?.message || e || "");
-      const codeMatch = msg.match(/:\s*([A-Z_]+)\s*-/);
-      const code = codeMatch ? codeMatch[1] : "UNKNOWN";
+      const code = plaidErrorCode(msg);
       const itemId = fallbackId;
       health[itemId] = {
         item_id: itemId, institution: g.institution, nicknames: g.nicknames,
