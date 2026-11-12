@@ -17,7 +17,7 @@ test("YNAB update response missing transaction_ids is not treated as success", a
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({ data: {} });
   try {
-    await assert.rejects(() => ynabUpdateTransactions(env, updates), /transaction_ids is required/);
+    await assert.rejects(() => ynabUpdateTransactions(env, updates), /invalid transaction result envelope/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
