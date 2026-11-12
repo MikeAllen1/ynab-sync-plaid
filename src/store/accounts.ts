@@ -145,7 +145,7 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
   // silently attach old cursors, posted pins, links, and YNAB history to a
   // different bank account. Token rotation is allowed; identity remapping is not.
   for (const item of incoming) {
-    const nickname = String(item.nickname).trim().toLowerCase().replace(/\\s+/g, "-");
+    const nickname = String(item.nickname).trim().toLowerCase().replace(/\s+/g, "-");
     const previous = byNick[nickname];
     if (!previous) continue;
     const nextPlaidId = String(item.plaid_account_id || previous.plaid_account_id).trim();
