@@ -31,12 +31,13 @@ test("Plaid setup uses a nonce for scripts and only retains Plaid-required inlin
   const csp = response.headers.get("Content-Security-Policy") || "";
   const html = await response.text();
   assert.match(csp, /script-src 'nonce-/);
+  assert.match(csp, /script-src-attr 'none'/);
   assert.doesNotMatch(csp, /script-src-attr 'unsafe-inline'/);
   assert.match(csp, /style-src-attr 'unsafe-inline'/);
   assert.match(csp, /https:\/\/production\.plaid\.com/);
   assert.match(csp, /frame-src https:\/\/cdn\.plaid\.com/);
   assert.doesNotMatch(html, /\sonclick\s*=|\sonerror\s*=|\sstyle\s*=/i);
-  assert.ok(html.includes('<button id="addBtn">Link a new bank</button>'));
+  assert.match(html, /<button id="addBtn" data-action="add-bank">Link a new bank<\/button>/);
   assert.match(html, /<script nonce="[^"]+" src="https:\/\/cdn\.plaid\.com/);
 });
 
