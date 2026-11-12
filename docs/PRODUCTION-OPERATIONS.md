@@ -46,6 +46,16 @@ Credential validity is established only by successful authenticated provider ope
 
 ## Monitoring requirements
 
+The repository now includes `.github/workflows/production-health.yml`, which runs every 15 minutes
+and on manual dispatch. Configure the repository Actions secrets `WORKER_BASE_URL` (HTTPS
+Worker origin) and `ADMIN_TOKEN`. The probe exchanges the admin token for the same short-lived
+HttpOnly session cookie used by the dashboard, calls `/health`, and fails without printing the
+health payload if the service is unhealthy, paused, missing the Durable Object lock, or has
+overdue accounts. A failed run is visible in GitHub Actions; configure GitHub notification
+subscriptions or a separate alert destination if operators need delivery outside GitHub.
+GitHub scheduled jobs can be delayed, so this is a useful independent check, not a strict
+15-minute paging SLA.
+
 Monitor the application from outside the Worker. At minimum, evaluate the authenticated
 `/health` report and alert when:
 
