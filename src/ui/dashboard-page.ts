@@ -1,5 +1,4 @@
 import { NO_FRAMING } from "../util/http";
-import { escapeHtml as esc, safeCssClass } from "../util/html";
 
 export function dashboardHtml(): Response {
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
@@ -285,6 +284,18 @@ export function dashboardHtml(): Response {
 </main>
 
 <script>
+// These helpers execute in the browser, not in the Worker module scope.
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function safeCssClass(value, allowed) {
+  return typeof value === "string" && allowed.indexOf(value) !== -1 ? value : "";
+}
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
 
 function $(id) { return document.getElementById(id); }
