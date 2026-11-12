@@ -21,8 +21,20 @@ import vm from "node:vm";
 import { dashboardHtml } from "../src/ui/dashboard-page";
 import { setupHtml } from "../src/ui/setup-page";
 
+// Our own trusted page templates, not untrusted HTML: plain string search for the inline
+// <script> blocks (the external Plaid <script src=...> is skipped).
 function inlineScripts(html: string): string {
-  return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(m => m[1]).join("\n");
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    const open = html.indexOf("<script>", at);
+    if (open < 0) break;
+    const close = html.indexOf("</script>", open);
+    if (close < 0) break;
+    out.push(html.slice(open + "<script>".length, close));
+    at = close;
+  }
+  return out.join("\n");
 }
 
 test("dashboard and setup page scripts define the escaping helpers they call", async () => {
