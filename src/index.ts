@@ -469,7 +469,11 @@ export const workerEntry = {
           client_name: "YNAB Sync Setup",
           country_codes: ["US"],
           language: "en",
-          redirect_uri: redirectUri
+          redirect_uri: redirectUri,
+          // Register the webhook on the Item from the moment it's created (and re-point
+          // it on a reconnect), so a new bank gets push updates without a separate
+          // "Re-register webhooks" step.
+          webhook: `${(env as any).WORKER_ORIGIN || url.origin}/webhook`
         };
         if (body.nickname) {
           const acct = (await getAccounts(env)).find((a: any) => a.nickname === body.nickname);
