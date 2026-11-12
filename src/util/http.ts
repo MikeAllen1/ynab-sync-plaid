@@ -99,6 +99,51 @@ export async function createAdminSessionValue(adminToken: string, issuedAt = Mat
   return `v1.${issuedAt}.${hex}`;
 }
 
+// ---------- Admin-token attempt throttling ----------
+// The admin token is long and random, so guessing it is impractical; this is defense
+// in depth. Failed attempts are counted per client IP and globally in the SyncLock
+// Durable Object. If the Durable Object can't be reached, attempts are not throttled
+// (the token is still required): an outage must never lock the owner out.
+
+function authKeys(req: Request): string[] {
+  const ip = (req.headers.get("CF-Connecting-IP") || "unknown").replace(/[^\w.:-]/g, "").slice(0, 80) || "unknown";
+  return [`ip:${ip}`, "global:all"];
+}
+
+async function authLimiter(env: Env, req: Request, action: "check" | "fail"): Promise<{ blocked: boolean; retry_after_seconds: number }> {
+  if (!env.SYNC_LOCK) return { blocked: false, retry_after_seconds: 0 };
+  try {
+    const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+    const resp = await stub.fetch(`https://sync-lock/auth/${action}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys: authKeys(req) })
+    });
+    if (!resp.ok) return { blocked: false, retry_after_seconds: 0 };
+    const data: any = await resp.json();
+    return { blocked: data?.blocked === true, retry_after_seconds: Number(data?.retry_after_seconds) || 0 };
+  } catch {
+    return { blocked: false, retry_after_seconds: 0 };
+  }
+}
+
+export function tooManyAttempts(retryAfterSeconds: number): Response {
+  const resp = json({ error: "too many failed sign-in attempts; try again later", retry_after_seconds: retryAfterSeconds }, 429);
+  resp.headers.set("Retry-After", String(Math.max(1, retryAfterSeconds)));
+  return resp;
+}
+
+/**
+ * Check a presented admin token with throttling. Returns null when it matches,
+ * otherwise a 401 or 429 response to send back.
+ */
+export async function checkAdminTokenAttempt(req: Request, env: Env, supplied: string): Promise<Response | null> {
+  const before = await authLimiter(env, req, "check");
+  if (before.blocked) return tooManyAttempts(before.retry_after_seconds);
+  if (supplied && env.ADMIN_TOKEN && constantTimeEqual(supplied, env.ADMIN_TOKEN)) return null;
+  const after = await authLimiter(env, req, "fail");
+  if (after.blocked) return tooManyAttempts(after.retry_after_seconds);
+  return json({ ok: false, error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
+}
+
 export async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
   const headerToken = req.headers.get("x-admin-token");
   const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
@@ -126,8 +171,10 @@ export async function requireAdmin(req: Request, env: Env): Promise<Response | n
     return json({ error: "ADMIN_TOKEN is not configured. Run: npx wrangler secret put ADMIN_TOKEN" }, 500);
   }
 
-  if (!cookieValid && (!headerToken || !constantTimeEqual(headerToken, env.ADMIN_TOKEN))) {
-    return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
+  if (!cookieValid) {
+    if (!headerToken) return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
+    const refused = await checkAdminTokenAttempt(req, env, headerToken);
+    if (refused) return refused;
   }
 
   return null;
