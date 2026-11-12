@@ -115,6 +115,7 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
   if (!Array.isArray(incoming) || incoming.length === 0) throw new Error("accounts must be a non-empty array");
   const nicknames = new Set<string>();
   const plaidIds = new Set<string>();
+  const ynabIds = new Set<string>();
   for (const [index, item] of incoming.entries()) {
     if (!item || typeof item !== "object") throw new Error("Account " + (index + 1) + " must be an object.");
     const nickname = String(item.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
@@ -124,9 +125,11 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
     if (!plaidId || !ynabId) throw new Error("Account " + nickname + " requires Plaid and YNAB account IDs.");
     if (nicknames.has(nickname)) throw new Error("Duplicate account nickname: " + nickname + ".");
     if (plaidIds.has(plaidId)) throw new Error("Plaid account " + plaidId + " is mapped more than once.");
+    if (ynabIds.has(ynabId)) throw new Error("YNAB account " + ynabId + " is mapped more than once; each bank account must have its own YNAB destination.");
     if (item.is_credit_card !== undefined && typeof item.is_credit_card !== "boolean") throw new Error("is_credit_card for " + nickname + " must be a boolean.");
     nicknames.add(nickname);
     plaidIds.add(plaidId);
+    ynabIds.add(ynabId);
   }
 
   const byNick: Record<string, AccountConfig> = {};
@@ -144,6 +147,13 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
   // settings. Replacing either provider account ID under that identity would
   // silently attach old cursors, posted pins, links, and YNAB history to a
   // different bank account. Token rotation is allowed; identity remapping is not.
+  const incomingNicknames = new Set(incoming.map((item: any) => String(item.nickname).trim().toLowerCase().replace(/\\s+/g, "-")));
+  for (const previous of stored) {
+    if (incomingNicknames.has(previous.nickname)) continue;
+    if (incoming.some((item: any) => String(item.ynab_account_id || "").trim() === previous.ynab_account_id)) {
+      throw new Error(`Account destination '${previous.ynab_account_id}' is being reassigned under a different nickname. Use the explicit account migration procedure instead of removing and re-adding the mapping.`);
+    }
+  }
   for (const item of incoming) {
     const nickname = String(item.nickname).trim().toLowerCase().replace(/\s+/g, "-");
     const previous = byNick[nickname];
