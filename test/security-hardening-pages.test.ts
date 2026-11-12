@@ -65,3 +65,18 @@ test("production readiness endpoint verifies live KV and Durable Object access w
   assert.equal(body.durable_object.storage, "available");
   assert.equal(JSON.stringify(body).includes(env.ADMIN_TOKEN), false);
 });
+
+test("linked-account reconnect list stays available without enabling sensitive diagnostics", async () => {
+  const env = {
+    ...pageEnv(),
+    ACCOUNT_MAP: JSON.stringify([{ nickname: "checking", plaid_access_token: "secret-token-value", plaid_account_id: "plaid-account-id", ynab_account_id: "ynab-account-id", item_id: "item-123", institution: "Example Bank" }]),
+    SYNC_STATE: { get: async () => null }
+  } as unknown as Env;
+  const response = await workerEntry.routeFetch(new Request("https://worker.example/accounts/linked", {
+    headers: { "x-admin-token": env.ADMIN_TOKEN }
+  }), env, ctx);
+  assert.equal(response.status, 200);
+  const body = await response.json() as any[];
+  assert.deepEqual(body, [{ nickname: "checking", institution: "Example Bank", login: "item-123" }]);
+  assert.equal(JSON.stringify(body).includes("secret-token-value"), false);
+});
