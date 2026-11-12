@@ -3,7 +3,7 @@ import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DA
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
-import { getRecentRawTransactionsDetailed, lookbackDate, toIsoDate } from "../plaid/fetch";
+import { getRecentRawTransactionsDetailed, lookbackDate, shiftCalendarDate, toIsoDate } from "../plaid/fetch";
 import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
@@ -14,7 +14,7 @@ import { appendUndo, getUndoLog } from "./undo";
 import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
-import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabUpdateEach, ynabUpsert } from "../ynab/client";
+import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabGetPlanCurrency, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
 
 // ================= SYNC ENGINE (identity-first, shared by checking and cards) =================
 //
@@ -600,6 +600,53 @@ export function hasConcurrentDeleteConflict(
   return fields.some(k => JSON.stringify((before as any)[k]) !== JSON.stringify((latest as any)[k]));
 }
 
+
+export interface PlaidSyncDeltaBatch {
+  added: PlaidTransaction[];
+  modified: PlaidTransaction[];
+  removedIds: Set<string>;
+  cursor: string;
+}
+
+/** Fetch one complete Plaid cursor batch; mutation errors restart from the original cursor. */
+export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, originalCursor: string): Promise<PlaidSyncDeltaBatch> {
+  const added: PlaidTransaction[] = [];
+  const modified: PlaidTransaction[] = [];
+  const removedIds = new Set<string>();
+  const maxPaginationRestarts = 3;
+  let cursor = originalCursor;
+  let completed = false;
+  for (let attempt = 0; attempt <= maxPaginationRestarts && !completed; attempt++) {
+    added.length = 0;
+    modified.length = 0;
+    removedIds.clear();
+    let pageCursor = originalCursor;
+    let hasMore = true;
+    try {
+      while (hasMore) {
+        const resp = await plaidCall(env, "/transactions/sync", {
+          access_token: acct.plaid_access_token, cursor: pageCursor, count: 500
+        });
+        if (resp.has_more && resp.next_cursor === pageCursor) {
+          throw new Error("Plaid /transactions/sync pagination cursor did not advance");
+        }
+        added.push(...resp.added.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        modified.push(...resp.modified.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        for (const removed of resp.removed) if (removed.account_id === acct.plaid_account_id) removedIds.add(removed.transaction_id);
+        pageCursor = resp.next_cursor;
+        hasMore = resp.has_more;
+      }
+      cursor = pageCursor;
+      completed = true;
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      if (!message.includes("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION") || attempt === maxPaginationRestarts) throw error;
+    }
+  }
+  if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
+  return { added, modified, removedIds, cursor };
+}
+
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
   const isCard = isCreditCardAccount(acct);
   const pid = acct.plaid_account_id;
@@ -628,30 +675,11 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
   if (!options.backfillOnly) {
-    let hasMore = true;
-    while (hasMore) {
-      const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
-      if (!resp || !Array.isArray(resp.added) || !Array.isArray(resp.modified) ||
-          !Array.isArray(resp.removed) || typeof resp.next_cursor !== "string" ||
-          typeof resp.has_more !== "boolean") {
-        throw new Error("Plaid /transactions/sync returned an invalid page: added, modified, removed, next_cursor and has_more are required");
-      }
-      const validTxn = (t: any) => t && typeof t.transaction_id === "string" &&
-        typeof t.account_id === "string" && typeof t.date === "string" &&
-        typeof t.amount === "number" && Number.isFinite(t.amount);
-      if (resp.added.some((t: any) => !validTxn(t)) || resp.modified.some((t: any) => !validTxn(t)) ||
-          resp.removed.some((t: any) => !t || typeof t.transaction_id !== "string")) {
-        throw new Error("Plaid /transactions/sync returned a malformed transaction");
-      }
-      if (resp.has_more && resp.next_cursor === cursor) {
-        throw new Error("Plaid /transactions/sync pagination cursor did not advance");
-      }
-      added.push(...resp.added.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      modified.push(...resp.modified.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      for (const removed of resp.removed) if (!removed.account_id || removed.account_id === pid) removedIds.add(removed.transaction_id);
-      cursor = resp.next_cursor;
-      hasMore = resp.has_more;
-    }
+    const batch = await fetchPlaidSyncDeltas(env, acct, cursor);
+    added.push(...batch.added);
+    modified.push(...batch.modified);
+    for (const id of batch.removedIds) removedIds.add(id);
+    cursor = batch.cursor;
   }
 
   // ---- Plaid: current state of the verification window (read-only) ----
@@ -665,7 +693,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // Never create POSTED rows dated before bootstrap: the YNAB starting balance set at
   // bootstrap already includes them.
   const bootstrapDate = options.importFloor || (await env.SYNC_STATE.get(`bootstrap_date:${pid}`)) || "";
-  let importStart = toIsoDate(new Date(Date.now() - windowDays * 86400000));
+  let importStart = shiftCalendarDate(todayInTimeZone(env), -windowDays);
   if (bootstrapDate > importStart) importStart = bootstrapDate;
   try {
     const w = await getRecentRawTransactionsDetailed(env, acct, Math.max(windowDays, VERIFY_WINDOW_DAYS), 500);
@@ -743,7 +771,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // twice. Normally that is the usual lookback; for older charges it is widened to 5
   // days before the oldest, capped at IDENTITY_HORIZON_DAYS.
   const today = todayInTimeZone(env);
-  const horizonFloor = toIsoDate(new Date(Date.now() - IDENTITY_HORIZON_DAYS * 86400000));
+  const horizonFloor = shiftCalendarDate(todayInTimeZone(env), -IDENTITY_HORIZON_DAYS);
   let snapshotStart = lookbackDate(env);
   for (const it of items) {
     if (!creatable.has(it.L)) continue;
@@ -1316,6 +1344,22 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     }
   }
 
+  // Validate currency only for rows that will be created or have their amount changed.
+  // Plaid amounts are transaction-currency amounts; this worker has no FX conversion.
+  const amountUpdateIds = new Set(updates.filter(u => u.amount !== undefined).map(u => u.id));
+  const currencyItems = items.filter(it =>
+    creates.some(c => createFor.get(c.import_id) === it) ||
+    (!!it.row && amountUpdateIds.has(it.row.id))
+  );
+  if (currencyItems.length > 0) {
+    const planCurrency = await ynabGetPlanCurrency(env);
+    const mismatches = currencyItems.filter(it => it.t.iso_currency_code !== planCurrency);
+    if (mismatches.length > 0) {
+      const detail = mismatches.slice(0, 5).map(it => `${it.t.transaction_id}:${it.t.iso_currency_code}`).join(", ");
+      throw new Error(`Currency mismatch: YNAB plan currency is ${planCurrency}, but Plaid returned transaction currency for ${detail}. No financial writes or cursor advance occurred; automatic FX conversion is not supported.`);
+    }
+  }
+
   // Last check before writing: if sync was paused while this account was being
   // planned, write nothing and leave the cursor where it was.
   if (!(await isSyncEnabled(env))) {
@@ -1331,6 +1375,21 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!options.dryRun) await env.SYNC_STATE.put(undoIntentKey, JSON.stringify({ run_id: options.runId || "", trigger: options.trigger || "unknown", import_ids: creates.map(c => c.import_id) }));
     createdResult = await ynabUpsert(env, creates);
     rejected.push(...(createdResult.duplicate_import_ids || []));
+    // Verify both register legs before treating a transfer create as complete.
+    const transferCreates = creates.filter(c => !!c.payee_id);
+    if (transferCreates.length > 0) {
+      const afterTransfers = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+      const byImportId = new Map(afterTransfers.filter(r => r.import_id).map(r => [r.import_id as string, r]));
+      for (const transfer of transferCreates) {
+        const target = ctx.accounts.find(a => ctx.accountPayeeByNickname[a.nickname] === transfer.payee_id);
+        const sourceRow = byImportId.get(transfer.import_id);
+        if (!target || !sourceRow) {
+          throw new Error(`YNAB transfer verification failed: could not resolve transfer ${transfer.import_id} to its source and destination accounts.`);
+        }
+        await ynabVerifyTransferPair(env, sourceRow.id, acct.ynab_account_id, target.ynab_account_id, transfer.amount);
+      }
+    }
+
     // YNAB can save the rows and still answer with an error (a timeout); the retry
     // then reports them as duplicates. An id that wasn't in YNAB before this run but
     // is there now was created by this run, not refused.
