@@ -6,7 +6,8 @@ import { SYNC_LOCK_TTL_SECONDS } from "./lock";
 // and webhooks cannot overwrite one another's history entries.
 const HISTORY_LIMITS: Record<string, number> = {
   event_log: 200,
-  webhook_history: 20
+  webhook_history: 20,
+  undo_log: 10
 };
 
 export class SyncLock {
@@ -73,30 +74,62 @@ export class SyncLock {
       return Response.json({ allowed });
     }
 
+    if (url.pathname === "/webhook/release" && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch {
+        return Response.json({ error: "invalid webhook receipt" }, { status: 400 });
+      }
+      const digest = String(body?.digest || "");
+      if (!/^[a-f0-9]{64}$/.test(digest)) {
+        return Response.json({ error: "invalid webhook digest" }, { status: 400 });
+      }
+      await this.state.storage.delete(`webhook_receipt:${digest}`);
+      return Response.json({ ok: true });
+    }
+
     if (url.pathname === "/webhook/claim" && request.method === "POST") {
       let body: any;
-      try { body = await request.json(); } catch { return Response.json({ error: "invalid claim" }, { status: 400 }); }
+      try { body = await request.json(); } catch {
+        return Response.json({ error: "invalid webhook claim" }, { status: 400 });
+      }
+      const digest = String(body?.digest || "");
       const fingerprint = String(body?.fingerprint || "");
-      if (!/^[a-f0-9]{64}$/.test(fingerprint)) return Response.json({ error: "invalid fingerprint" }, { status: 400 });
-      const claimed = await this.state.storage.transaction(async txn => {
-        const key = "webhook:seen";
-        const stored = await txn.get<Record<string, number>>(key);
-        const seen = stored && typeof stored === "object" ? stored : {};
-        for (const [hash, at] of Object.entries(seen)) {
-          if (typeof at !== "number" || now - at >= 600000) delete seen[hash];
-        }
-        if (seen[fingerprint]) {
-          await txn.put(key, seen);
-          return false;
-        }
-        // Bound durable storage even during sustained webhook floods.
-        const entries = Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 999);
-        const bounded = Object.fromEntries(entries);
-        bounded[fingerprint] = now;
-        await txn.put(key, bounded);
-        return true;
-      });
-      return Response.json({ claimed });
+      if (/^[a-f0-9]{64}$/.test(digest)) {
+        const ttl = Math.max(60, Math.min(3600, Number(body?.ttl_seconds) || 600));
+        const claimed = await this.state.storage.transaction(async txn => {
+          const receipts = await txn.list<number>({ prefix: "webhook_receipt:", limit: 1000 });
+          for (const [key, expiresAt] of receipts) {
+            if (typeof expiresAt !== "number" || expiresAt <= now) await txn.delete(key);
+          }
+          const key = `webhook_receipt:${digest}`;
+          const prior = await txn.get<number>(key);
+          if (typeof prior === "number" && prior > now) return false;
+          await txn.put(key, now + ttl * 1000);
+          return true;
+        });
+        return Response.json({ ok: true, claimed, duplicate: !claimed });
+      }
+      if (/^[a-f0-9]{64}$/.test(fingerprint)) {
+        const claimed = await this.state.storage.transaction(async txn => {
+          const key = "webhook:seen";
+          const stored = await txn.get<Record<string, number>>(key);
+          const seen = stored && typeof stored === "object" ? stored : {};
+          for (const [hash, at] of Object.entries(seen)) {
+            if (typeof at !== "number" || now - at >= 600000) delete seen[hash];
+          }
+          if (seen[fingerprint]) {
+            await txn.put(key, seen);
+            return false;
+          }
+          const entries = Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 999);
+          const bounded = Object.fromEntries(entries);
+          bounded[fingerprint] = now;
+          await txn.put(key, bounded);
+          return true;
+        });
+        return Response.json({ claimed, duplicate: !claimed });
+      }
+      return Response.json({ error: "invalid webhook digest or fingerprint" }, { status: 400 });
     }
 
     if (url.pathname === "/history/append" && request.method === "POST") {
@@ -123,7 +156,19 @@ export class SyncLock {
         const existing = Array.isArray(stored)
           ? stored
           : (Array.isArray(body.initial) ? body.initial : []);
-        const merged = [...body.items, ...existing].slice(0, limit);
+        let merged: any[];
+        if (key === "undo_log") {
+          merged = [...existing];
+          for (const incoming of body.items) {
+            const at = incoming?.run_id ? merged.findIndex((entry: any) => entry?.run_id === incoming.run_id) : -1;
+            if (at >= 0) {
+              const prior = merged[at];
+              merged[at] = { ...prior, items: [...(Array.isArray(prior.items) ? prior.items : []), ...(Array.isArray(incoming.items) ? incoming.items : [])] };
+              merged[at].count = merged[at].items.length;
+            } else merged.unshift(incoming);
+          }
+          merged = merged.slice(0, limit);
+        } else merged = [...body.items, ...existing].slice(0, limit);
         await txn.put(`history:${key}`, merged);
         return merged.length;
       });
