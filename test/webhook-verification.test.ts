@@ -46,6 +46,14 @@ function envWithKey(jwk: JsonWebKey): Env {
       get: async (key: string) => values.get(key) ?? null,
       put: async (key: string, value: string) => { values.set(key, value); },
       delete: async (key: string) => { values.delete(key); }
+    },
+    // Verification now consumes a globally coordinated Durable Object read
+    // budget before looking in KV. The test stub models an available budget.
+    SYNC_LOCK: {
+      idFromName: () => "test-global",
+      get: () => ({
+        fetch: async () => Response.json({ allowed: true })
+      })
     }
   } as unknown as Env;
 }
