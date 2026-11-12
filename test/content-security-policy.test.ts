@@ -15,7 +15,8 @@ for (const path of ["/dashboard", "/setup"]) {
     if (path === "/setup") {
       assert.ok(policy.includes("style-src-attr 'unsafe-inline'"));
       assert.ok(policy.includes("script-src-attr 'none'"));
-      assert.ok(policy.includes("https://production.plaid.com"));
+      const connectSrc = policy.split(";").map(part => part.trim()).find(part => part.startsWith("connect-src ")) || "";
+      assert.match(connectSrc, /(?:^|\s)https:\/\/production\.plaid\.com(?:\s|$)/);
     } else {
       assert.ok(policy.includes("style-src-attr 'none'"));
       assert.equal(policy.includes("'unsafe-inline'"), false);
