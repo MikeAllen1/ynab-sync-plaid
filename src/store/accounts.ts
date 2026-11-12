@@ -354,3 +354,67 @@ export function isCreditCardAccount(acct: AccountConfig): boolean {
   // routes: any nickname naming a known card (amex) or containing "card".
   return n.includes("amex") || n.includes("card");
 }
+
+/**
+ * Explicit Plaid account-ID migration. This is intentionally separate from the
+ * ordinary settings save path: old per-account state is retained under the old
+ * ID, the destination YNAB account cannot change, and the new ID must be unused.
+ */
+export async function migratePlaidAccountIdentity(
+  env: Env,
+  nickname: string,
+  newAccessToken: string,
+  newPlaidAccountId: string,
+  newItemId: string,
+  confirmedYnabAccountId: string
+): Promise<{ nickname: string; old_plaid_account_id: string; new_plaid_account_id: string; ynab_account_id: string; migration_id: string }> {
+  const accounts = await getAccounts(env);
+  const current = accounts.find(a => a.nickname === nickname);
+  if (!current) throw new Error(`No mapped account named '${nickname}'.`);
+  if (!newAccessToken || !newPlaidAccountId || !newItemId) throw new Error("A new Plaid access token, account ID, and Item ID are required.");
+  if (confirmedYnabAccountId !== current.ynab_account_id) throw new Error("Migration confirmation must include the existing YNAB account ID exactly; changing the YNAB destination is not supported.");
+  if (newPlaidAccountId === current.plaid_account_id) throw new Error("The new Plaid account ID is unchanged; use the ordinary reconnect flow.");
+  if (accounts.some(a => a.nickname !== nickname && a.plaid_account_id === newPlaidAccountId)) throw new Error("The new Plaid account ID is already mapped to another account.");
+
+  // A new Plaid ID must not carry state from an earlier/abandoned mapping. Reusing
+  // that state could attach a different account's cursor or lifecycle ownership.
+  const stateKeys = [
+    "cursor", "posted", "pending", "links", "rejected", "bootstrapped",
+    "bootstrap_date", "legs_not_worker", "update_failed", "too_old_logged",
+    "last_account_sync", "undo_intent"
+  ].map(prefix => `${prefix}:${newPlaidAccountId}`);
+  for (const key of stateKeys) {
+    if (await env.SYNC_STATE.get(key) !== null) {
+      throw new Error(`The new Plaid account ID already has saved sync state (${key}); migration was not performed.`);
+    }
+  }
+
+  const migrationId = crypto.randomUUID();
+  const historyKey = `account_migration:${migrationId}`;
+  const record = {
+    migration_id: migrationId,
+    status: "prepared",
+    nickname,
+    old_plaid_account_id: current.plaid_account_id,
+    new_plaid_account_id: newPlaidAccountId,
+    ynab_account_id: current.ynab_account_id,
+    old_item_id: current.item_id || null,
+    new_item_id: newItemId,
+    created_at: new Date().toISOString(),
+    note: "Old Plaid-ID state is intentionally retained. The new ID starts with a fresh cursor and bootstraps against the existing YNAB register."
+  };
+  await env.SYNC_STATE.put(historyKey, JSON.stringify(record));
+  const updated = accounts.map(a => a.nickname === nickname
+    ? { ...a, plaid_access_token: newAccessToken, plaid_account_id: newPlaidAccountId, item_id: newItemId }
+    : a);
+  await putAccounts(env, updated);
+  record.status = "committed";
+  await env.SYNC_STATE.put(historyKey, JSON.stringify(record));
+  return {
+    nickname,
+    old_plaid_account_id: current.plaid_account_id,
+    new_plaid_account_id: newPlaidAccountId,
+    ynab_account_id: current.ynab_account_id,
+    migration_id: migrationId
+  };
+}
