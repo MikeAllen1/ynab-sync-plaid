@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rollbackSync } from "../src/sync/undo";
 import type { Env } from "../src/types";
+import { makeSyncLockNamespace } from "./helpers/sync-lock";
 
 const account = {
   nickname: "checking",
@@ -22,6 +23,10 @@ function makeEnv(rows: any[], batchItems: any[]) {
     }])]
   ]);
   const env = {
+    SYNC_LOCK: makeSyncLockNamespace({ "history:undo_log": [{
+      ts: "2026-11-11T12:00:00.000Z", trigger: "test", run_id: "run-1",
+      count: batchItems.length, items: batchItems
+    }] }),
     ACCOUNT_MAP: JSON.stringify([account]),
     YNAB_TOKEN: "test-token",
     YNAB_BUDGET_ID: "test-budget",
