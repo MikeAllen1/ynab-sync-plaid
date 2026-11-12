@@ -36,7 +36,7 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
@@ -49,7 +49,7 @@ import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
 import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
-import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
+import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
 // Durable Object classes must be exported from the main module.
@@ -504,6 +504,44 @@ export const workerEntry = {
       });
     }
 
+    // Explicit account-ID migration for the rare case Plaid cannot reconcile an
+    // account ID. This is separate from ordinary settings saves and requires
+    // operator confirmation that the new Plaid account is the same real account.
+    if (url.pathname === "/accounts/migrate-plaid-id") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
+      const unauthorized = await requireAdmin(req, env);
+      if (unauthorized) return unauthorized;
+      return lockedJson(env, async () => {
+        const body = await req.json() as any;
+        const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
+        const linkId = String(body.link_id || "").trim();
+        if (!nickname || !linkId || body.confirm_same_account !== true) {
+          return { ok: false, error: "Provide nickname, link_id, and confirm_same_account: true after verifying the new bank account is the same real-world account." };
+        }
+        const pendingKey = "pending_link:" + linkId;
+        const pending = await readJson(env, pendingKey, null);
+        if (!pending?.access_token || !pending?.item_id) return { ok: false, error: "That bank link expired or is invalid. Link the bank again." };
+        const current = (await getAccounts(env)).find(a => a.nickname === nickname);
+        if (!current) return { ok: false, error: "No mapped account named " + nickname + "." };
+        if (String(body.confirm_ynab_account_id || "") !== current.ynab_account_id) {
+          return { ok: false, error: "confirm_ynab_account_id must exactly match the existing YNAB destination. Migration cannot change the YNAB account." };
+        }
+        const newPlaidAccountId = String(body.plaid_account_id || "").trim();
+        if (!newPlaidAccountId) return { ok: false, error: "plaid_account_id is required." };
+        const plaidAccounts = await plaidCall(env, "/accounts/get", { access_token: pending.access_token });
+        if (!(plaidAccounts.accounts || []).some((a: any) => a.account_id === newPlaidAccountId)) {
+          return { ok: false, error: "The selected Plaid account does not belong to the newly linked Item." };
+        }
+        const ynabAccounts = await ynabGetAccounts(env);
+        if (!ynabAccounts.some((a: any) => a.id === current.ynab_account_id && !a.closed && !a.deleted)) {
+          return { ok: false, error: "The existing YNAB destination is no longer active; migration was not performed." };
+        }
+        const result = await migratePlaidAccountIdentity(env, nickname, pending.access_token, newPlaidAccountId, pending.item_id, current.ynab_account_id);
+        await env.SYNC_STATE.delete(pendingKey);
+        return { ok: true, migration: result, note: "Previous Plaid-ID state was retained and account writes were paused. The new Plaid ID starts with a fresh cursor and bootstraps against the existing YNAB register. Run a dry run, verify the register and balances, then explicitly re-enable sync." };
+      });
+    }
+
     // Add-a-bank, step 1: exchange Plaid Link's public token. The access token is
     // kept server-side (KV, 1 hour) and never sent to the browser; the page gets a
     // pending link id plus the item's accounts to choose from.
@@ -651,13 +689,9 @@ export const workerEntry = {
       const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") || 60)));
       const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
       // A delta request (last_knowledge_of_server) is the only way YNAB returns deleted rows.
-      const resp = await fetchWithRetry(
-        `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts/${acct.ynab_account_id}/transactions?since_date=${since}&last_knowledge_of_server=1`,
-        { method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` } }
-      );
-      const data: any = await readJsonBody(resp);
-      if (!resp.ok) return json({ ok: false, error: `YNAB ${resp.status}`, detail: data }, 502);
-      const all: any[] = data.data?.transactions || [];
+      let all: any[];
+      try { all = await ynabGetDeletedAccountTransactions(env, acct.ynab_account_id, since); }
+      catch (e: any) { return json({ ok: false, error: e?.message || String(e) }, 502); }
       const origin = (r: any) => !r.import_id ? "entered by hand" : String(r.import_id).startsWith("YNAB:") ? "Direct Import" : /^(pcc|pcp|wp|ynab-sync)/i.test(String(r.import_id)) ? "worker" : "other import";
       const view = (r: any) => ({ id: r.id, date: r.date, payee: r.payee_name || "", amount: roundMoney(Number(r.amount || 0) / 1000), cleared: r.cleared, import_id: r.import_id || "", origin: origin(r), is_transfer: !!r.transfer_transaction_id, memo: r.memo || "" });
       const deleted = all.filter(r => r.deleted).map(view).sort((a, b) => (a.date < b.date ? 1 : -1));
