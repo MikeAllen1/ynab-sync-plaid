@@ -157,7 +157,7 @@ export async function fetchRawWindow(
       if (page.length === 0 && offset < total) { stable = false; break; }
       if (page.length > pageSize || offset + page.length > total) throw new Error("Plaid /transactions/get returned an invalid page size or offset.");
       for (const transaction of page) {
-        if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages.");
+        if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages (duplicate transaction).");
         seenIds.add(transaction.transaction_id);
       }
       rows.push(...page);
@@ -175,7 +175,7 @@ export async function fetchRawWindow(
   // it to retire pending YNAB rows.
   const first = await readPass();
   let stable = first.stable;
-  if (first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
+  if (first.stable && first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
     const second = await readPass();
     const signature = (rows: any[]) => rows.map(t => [
       t.transaction_id, t.pending_transaction_id || "", t.account_id, t.date,
