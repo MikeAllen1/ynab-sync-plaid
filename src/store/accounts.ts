@@ -140,6 +140,23 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
     if (missing.length) throw new Error(`${CONFIG_UNREADABLE}: the saved account list can't be read, so it can only be replaced with a complete one. Include the Plaid access token for: ${missing.join(", ")}.`);
   }
   stored.forEach(a => { byNick[a.nickname] = a; });
+  // A nickname is the stable identity used by the dashboard and automation
+  // settings. Replacing either provider account ID under that identity would
+  // silently attach old cursors, posted pins, links, and YNAB history to a
+  // different bank account. Token rotation is allowed; identity remapping is not.
+  for (const item of incoming) {
+    const nickname = String(item.nickname).trim().toLowerCase().replace(/\\s+/g, "-");
+    const previous = byNick[nickname];
+    if (!previous) continue;
+    const nextPlaidId = String(item.plaid_account_id || previous.plaid_account_id).trim();
+    const nextYnabId = String(item.ynab_account_id || previous.ynab_account_id).trim();
+    if (nextPlaidId !== previous.plaid_account_id) {
+      throw new Error(`Account identity change blocked for '${nickname}': Plaid account ID changed. Use the account migration procedure; do not overwrite the existing mapping.`);
+    }
+    if (nextYnabId !== previous.ynab_account_id) {
+      throw new Error(`Account identity change blocked for '${nickname}': YNAB destination changed. Use the account migration procedure; do not overwrite the existing mapping.`);
+    }
+  }
   const merged: AccountConfig[] = incoming.map((a: any) => {
     const nickname = String(a.nickname).trim().toLowerCase().replace(/\s+/g, "-");
     const prev = byNick[nickname] || ({} as AccountConfig);
