@@ -34,7 +34,7 @@ jobs:
           sed -i 's/PASTE_KV_NAMESPACE_ID_HERE/00000000000000000000000000000000/; s/PASTE_YNAB_BUDGET_ID_HERE/00000000-0000-0000-0000-000000000000/' wrangler.toml
           npx wrangler deploy --dry-run --outdir dist
 
-  browser:
+  ui:
     # Playwright's Chromium doesn't support Ubuntu 26.04 yet (ubuntu-latest since Oct 2026).
     runs-on: ubuntu-24.04
     steps:
@@ -46,4 +46,4 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Browser tests (dashboard and setup pages, desktop and phone)
-        run: npm run test:browser
+        run: npm run test:ui
