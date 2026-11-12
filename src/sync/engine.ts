@@ -1,5 +1,5 @@
 import { TransferLabel, getTransferLabels } from "../rules/transfer-labels";
-import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DAYS, IMPORT_WINDOW_DAYS, MAX_MINT_ATTEMPTS, SNAPSHOT_MARGIN_DAYS, STALE_PENDING_DAYS } from "../constants";
+import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DAYS, IMPORT_WINDOW_DAYS, MAX_MINT_ATTEMPTS, PERMANENT_FAILURE_CURSOR_RELEASE_DAYS, SNAPSHOT_MARGIN_DAYS, STALE_PENDING_DAYS } from "../constants";
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
@@ -1517,6 +1517,9 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const failureText = (error: string) => /failed: 4\d\d/.test(error)
     ? `${plainYnabError(error)}. Fix it in YNAB; the rest of the sync continues.`
     : `YNAB was unavailable (${plainYnabError(error)}). The next sync retries it.`;
+  // Values are the first-failure date, with "#released" once the failure stopped
+  // holding the cursor (so that is logged once).
+  const firstFailed = (id: string) => String(prevFailed[id] || today).split("#")[0];
   for (const f of updatedResult.failed) {
     nowFailed[f.id] = prevFailed[f.id] || today;
     if (!prevFailed[f.id]) {
@@ -1529,6 +1532,23 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!prevFailed[f.id]) {
       const d = deletes.find(x => x.row.id === f.id);
       logEvent(events, { account: acct.nickname, action: "delete_failed", transaction_id: f.id, amount: d ? Number(d.row.amount || 0) : undefined, detail: `${d?.row.payee_name || ""}: couldn't remove it. ${failureText(String(f.error || ""))}` });
+    }
+  }
+  // Which failures still hold back the cursor. A permanent refusal (YNAB 4xx) that
+  // has lasted PERMANENT_FAILURE_CURSOR_RELEASE_DAYS no longer does: replaying the
+  // bank delta can't fix it, and holding the cursor made every later run re-read an
+  // ever-growing backlog. The row is still retried each run from the window.
+  const cursorBlockers: string[] = [];
+  for (const f of [...updatedResult.failed, ...deleteErrors]) {
+    const permanent = /failed: 4\d\d/.test(String(f.error || ""));
+    const aged = calendarDaysBetween(firstFailed(f.id), today) >= PERMANENT_FAILURE_CURSOR_RELEASE_DAYS;
+    if (permanent && aged) {
+      if (!String(prevFailed[f.id] || "").includes("#released")) {
+        logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: f.id, detail: `YNAB has refused this change for ${PERMANENT_FAILURE_CURSOR_RELEASE_DAYS}+ days, so it no longer holds up new bank activity. Fix the row in YNAB; the worker keeps retrying it.` });
+      }
+      nowFailed[f.id] = `${firstFailed(f.id)}#released`;
+    } else {
+      cursorBlockers.push(f.id);
     }
   }
   if (anyWrites && JSON.stringify(nowFailed) !== JSON.stringify(prevFailed)) {
@@ -1565,7 +1585,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   await persistPostedMap();
   if (legCacheChanged) await env.SYNC_STATE.put(legCacheKey, JSON.stringify(legCache));
   if (Object.keys(legacyPendingMap).length > 0) await env.SYNC_STATE.delete(pendingKey); // superseded by derived ids + links
-  if (!partial && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
+  if (cursorBlockers.length === 0 && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
   return {
     // "partial": everything else was written, but some updates or removals weren't.
     status: partial ? "partial" : "ok",
