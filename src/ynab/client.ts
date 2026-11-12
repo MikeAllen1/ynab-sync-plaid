@@ -83,6 +83,9 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
   if (missing.length > 0) {
     throw new Error(`YNAB update response did not confirm ${missing.length} of ${updates.length} requested transaction id(s)`);
   }
+  if (updatedIds.length !== updates.length || confirmed.size !== updates.length) {
+    throw new Error(`YNAB update response contained duplicate or unexpected transaction IDs; requested ${updates.length}, received ${updatedIds.length}.`);
+  }
   return { updated: updates.length };
 }
 
