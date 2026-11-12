@@ -55,9 +55,7 @@ test("Plaid transaction history rejects a changing total across pages", async ()
     });
   };
   try {
-    const result = await fetchRawWindow(env, account, 30, 1);
-    assert.equal(result.truncated, true, "a changing total must never be treated as a complete snapshot");
-    assert.equal(result.transactions.length, 3);
+    await assert.rejects(fetchRawWindow(env, account, 30, 1), /total_transactions changed/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -68,7 +66,6 @@ test("Plaid transaction history rejects duplicate records across pages", async (
     total_transactions: 2
   });
   try {
-    const result = await fetchRawWindow(env, account, 30, 1);
-    assert.equal(result.truncated, true, "duplicate rows across pages make the snapshot untrusted");
+    await assert.rejects(fetchRawWindow(env, account, 30, 1), /duplicate transaction/);
   } finally { globalThis.fetch = originalFetch; }
 });
