@@ -97,6 +97,52 @@ The short version:
 
 Start with **Dry run** ticked on the dashboard to see what a sync would do before it writes anything.
 
+## Security verification
+
+Detailed transaction-level debug endpoints are disabled by default. This includes raw Plaid rows,
+the YNAB register dump, pending-row traces, stuck-row detail, account-map diagnostics, and the other
+`/debug/*` routes. Normal sync, account health, and transaction reconciliation remain available.
+If you need the detailed recovery diagnostics temporarily, set
+`ENABLE_SENSITIVE_DIAGNOSTICS = "true"` in your local `wrangler.toml`, deploy, and turn it back
+off when finished. The account-map diagnostic never returns access-token previews or token-derived
+fingerprints.
+
+The dashboard uses a nonce-only script policy with no inline event handlers or style attributes.
+The setup page uses nonce-authorized scripts; it retains `style-src-attr 'unsafe-inline'` only
+because Plaid's published Link CSP requires that directive. See
+[Plaid's Link CSP guidance](https://plaid.com/docs/link/web/).
+
+### Verify a deployed Cloudflare Worker
+
+Run the read-only verifier from a trusted local machine. It checks the deployed KV and Durable
+Object bindings, the SQLite-backed SyncLock namespace, required secret *names* (never values),
+production Plaid mode, an active Cloudflare API token, deployed versions, live CSP headers, and a
+non-destructive runtime read/transaction probe.
+
+Create a Cloudflare API token scoped to this account with only **Workers Scripts Read** and
+**Workers KV Storage Read**. Do not grant Edit/Write permissions for this verification task.
+The script does not print or retrieve secret values.
+
+PowerShell:
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = "<read-only Cloudflare API token>"
+$env:CLOUDFLARE_ACCOUNT_ID = "<Cloudflare account ID>"
+$env:WORKER_URL = "https://<your-worker-host>"
+$env:ADMIN_TOKEN = "<existing Worker ADMIN_TOKEN>"
+npm run verify:production
+```
+
+The verifier is read-only. It does not deploy, modify secrets, change bindings, or write financial
+records. The runtime readiness endpoint is admin-authenticated and only performs a temporary
+Durable Object storage transaction plus a KV read. Cloudflare does not expose the historical
+Durable Object migration ledger through the metadata endpoint used here; the verifier therefore
+checks the deployed SQLite namespace, the active Worker binding, and actual runtime storage access.
+Review the Worker migration configuration in `wrangler.toml` as part of release review.
+
+For a local browser check of both pages and their CSP behavior, run `npm run test:browser`. CI
+runs the same Chromium smoke test automatically.
+
 ## Configuration
 
 | Where | What |
