@@ -127,7 +127,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     assert.equal(ynabRows[0].id, originalRowId, "the pending row must be updated in place");
     assert.equal(ynabRows[0].cleared, "cleared");
     assert.equal(ynabRows[0].amount, -6750);
-    assert.equal(ynabRows[0].memo, undefined);
+    assert.equal(ynabRows[0].memo, null);
     assert.equal(state.get("cursor:plaid-checking"), "cursor-posted");
 
     resetRunCache();
