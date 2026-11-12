@@ -154,7 +154,7 @@ export async function fetchRawWindow(
       if (page.some((t: any) => t.account_id !== acct.plaid_account_id)) {
         throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
       }
-      if (page.length === 0 && offset < total) throw new Error("Plaid /transactions/get returned an empty page before total_transactions was reached.");
+      if (page.length === 0 && offset < total) { stable = false; break; }
       if (page.length > pageSize || offset + page.length > total) throw new Error("Plaid /transactions/get returned an invalid page size or offset.");
       for (const transaction of page) {
         if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages.");
