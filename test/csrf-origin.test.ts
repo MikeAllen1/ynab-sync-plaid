@@ -64,3 +64,22 @@ test("Plaid's signed webhook route remains exempt from browser Origin checks", a
   }), {} as Env, ctx);
   assert.equal(response.status, 401);
 });
+
+test("header-token requests from scripts (no Origin) can call POST actions", async () => {
+  // /pause reaches the lock (absent in this test env, so 503): past both the Origin
+  // check and the admin check.
+  const response = await workerEntry.routeFetch(new Request("https://worker.example/pause", {
+    method: "POST",
+    headers: { "x-admin-token": "admin-test-token" }
+  }), env, ctx);
+  assert.equal(response.status, 503);
+});
+
+test("a wrong header token is rejected even when a valid session cookie rides along", async () => {
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
+  const response = await workerEntry.routeFetch(new Request("https://worker.example/pause", {
+    method: "POST",
+    headers: { "x-admin-token": "wrong", Cookie: cookie }
+  }), env, ctx);
+  assert.equal(response.status, 401);
+});

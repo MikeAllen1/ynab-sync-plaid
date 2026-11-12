@@ -49,11 +49,18 @@ Credential validity is established only by successful authenticated provider ope
 The repository includes `.github/workflows/production-health.yml`, an **opt-in** check that runs
 every 15 minutes and on manual dispatch. It is skipped until you set the repository Actions
 variable `ENABLE_PRODUCTION_HEALTH_CHECK` to `true` and add the Actions secrets
-`WORKER_BASE_URL` (HTTPS Worker origin) and `ADMIN_TOKEN`. Only turn it on in a private copy
-of the repository: it hands your Worker's admin token to GitHub Actions. The probe exchanges the admin token for the same short-lived
-HttpOnly session cookie used by the dashboard, calls `/health`, and fails without printing the
-health payload if the service is unhealthy, paused, missing the Durable Object lock, or has
-overdue accounts. A failed run is visible in GitHub Actions; configure GitHub notification
+`WORKER_BASE_URL` (HTTPS Worker origin) and `HEALTH_TOKEN`.
+
+`HEALTH_TOKEN` is a separate, read-only credential. Create it with
+`npx wrangler secret put HEALTH_TOKEN` (a long random value, different from `ADMIN_TOKEN`)
+and add the same value as the Actions secret. It can only read a minimal `/health` summary
+(status, pause state, lock mode, overdue account names): no balances, no transactions, and
+no way to change anything. Never give the monitor `ADMIN_TOKEN`; if an older setup did, delete
+that Actions secret once `HEALTH_TOKEN` works. (Without `HEALTH_TOKEN` the probe still falls
+back to `ADMIN_TOKEN` and warns.)
+
+The probe calls `/health` and fails without printing the payload if the service is unhealthy,
+paused, missing the Durable Object lock, or has overdue accounts. A failed run is visible in GitHub Actions; configure GitHub notification
 subscriptions or a separate alert destination if operators need delivery outside GitHub.
 GitHub scheduled jobs can be delayed, so this is a useful independent check, not a strict
 15-minute paging SLA.

@@ -9,7 +9,7 @@ free Cloudflare Worker you run yourself.
   Direct Import, or a row you typed in yourself).
 - **Card payments and transfers between your own accounts** become real YNAB transfers.
 - A **dashboard** shows each account's health (bank balance vs YNAB), what each sync did, and lets you
-  undo a sync, pause everything, or run a dry run first.
+  remove the rows a sync added, pause everything, or run a dry run first.
 - **Skip rules, payee aliases and transfer labels** for the cases banks get wrong.
 - Runs on Cloudflare's free plan. Your bank tokens stay in your own Cloudflare account.
 
@@ -33,7 +33,7 @@ it didn't create. Every write runs under a single lock, so two syncs can never r
 
 More: [how a charge flows through it](docs/HOW-IT-WORKS.md) · [FAQ](docs/FAQ.md) ·
 [known limitations](docs/LIMITATIONS.md) · [how the code is organized](docs/ARCHITECTURE.md) ·
-[changelog](CHANGELOG.md) · [API contract safeguards](docs/API-CONTRACT-SAFEGUARDS.md) · [account migration](docs/ACCOUNT-MIGRATION.md)
+[what the dashboard's words mean](docs/GLOSSARY.md) · [changelog](CHANGELOG.md) · [API contract safeguards](docs/API-CONTRACT-SAFEGUARDS.md) · [account migration](docs/ACCOUNT-MIGRATION.md)
 
 ## What you need
 
@@ -87,13 +87,16 @@ The short version:
 
 7. **Line up the starting point.** In YNAB, set each account's balance to the bank's **posted** balance
    (reconcile it). Then open `/dashboard`, go to **Settings** and turn the account's sync on. The first
-   run picks up from there (currently-pending charges included).
+   run picks up from there (currently-pending charges included) and never imports older history, so if
+   the balance was off, it stays off by that amount until you adjust it in YNAB. **Re-check** shows any
+   difference. ([More on the first sync](docs/setup/4-worker.md#start-syncing-one-account-at-a-time).)
 
-8. **Webhooks** (optional, makes new charges appear within minutes instead of on the next cron):
+8. **Webhooks** (optional, makes new charges appear within minutes instead of on the next cron): on the
+   dashboard, open **Recovery** and click **Re-register webhooks**. Or from a terminal:
    ```bash
-   curl -H "x-admin-token: <your admin token>" https://ynab-sync.<you>.workers.dev/configure-webhooks
+   curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.<you>.workers.dev/configure-webhooks
    ```
-   Run it again after linking another bank.
+   Banks linked from `/setup` are registered automatically; this is only needed for banks linked before that, or if the worker's address changed.
 
 Start with **Dry run** ticked on the dashboard to see what a sync would do before it writes anything.
 
@@ -102,14 +105,14 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 | Where | What |
 |---|---|
 | `wrangler.toml` `[vars]` | `PLAID_ENV`, `YNAB_BUDGET_ID`, `TIMEZONE`, optional `CC_TRANSFER_CUTOFF` (card payments before this date stay in the card's starting balance), `PLAID_REFRESH = "off"` (no billed refresh calls on paid Plaid plans) and `WORKER_ORIGIN` (links in alert emails) |
-| Secrets | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `YNAB_TOKEN`, `ADMIN_TOKEN`; optional `RESEND_API_KEY` + `ALERT_EMAIL_TO` (email when a bank needs reconnecting or syncs fail), `ALERT_WEBHOOK_URL` |
+| Secrets | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `YNAB_TOKEN`, `ADMIN_TOKEN`; recommended `TOKEN_ENCRYPTION_KEY` (encrypts bank tokens at rest, see [setup](docs/setup/4-worker.md)); optional `RESEND_API_KEY` + `ALERT_EMAIL_TO` (email when a bank needs reconnecting or syncs fail), `ALERT_WEBHOOK_URL` (Slack, Discord or any URL; sync failures, warnings and recoveries). Set both to get both. |
 | Dashboard → Settings | Per account: sync on/off, how often, catch-up window, health checks, how card payments name each card (last 4 / words) |
 | Dashboard → Rules | **Skip rules** (bank items never to import), **payee aliases** (names that mean the same merchant), **transfer labels** (name transfers to your own accounts elsewhere by their last digits, e.g. `1234` → "Savings") |
 
 ## Everyday use
 
 - **Dashboard** (`/dashboard`): overall status, each account's bank-vs-YNAB balance, recent activity,
-  *Sync now*, *Undo…* (previews first), *Pause all syncing* / *Resume syncing*.
+  *Sync now*, *Undo…* (removes the rows a sync added; previews first), *Pause all syncing* / *Resume syncing*.
 - **A bank says "Needs reauth"**: open `/setup` → **Reconnect**. Same accounts, same history.
 - **Logs**: `npx wrangler tail`.
 - **Turn it all off**: Pause on the dashboard, or remove the `[triggers]` block and redeploy.
@@ -125,10 +128,13 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 
 ## Security
 
-- Bank access tokens are stored in your Cloudflare KV, never in the code or repo.
-- Every endpoint that reads or changes data needs the admin token (`x-admin-token` header), compared
-  in constant time. Plaid webhooks are verified with Plaid's signed JWTs.
-- The dashboard and setup pages refuse to be framed.
+- Bank access tokens are stored in your Cloudflare KV, never in the code or repo, and encrypted with your own key
+  when `TOKEN_ENCRYPTION_KEY` is set.
+- Every endpoint that reads or changes data needs the admin token, compared in constant time. The dashboard
+  exchanges it once for a one-hour session held in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, so page
+  scripts never see it; scripts can send it in the `x-admin-token` header instead.
+- Plaid webhooks are verified with Plaid's signed JWTs.
+- The dashboard and setup pages refuse to be framed, and state-changing browser requests must be same-origin.
 
 ## Contributing and security
 

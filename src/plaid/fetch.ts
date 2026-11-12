@@ -2,7 +2,7 @@ import { YNAB_LOOKBACK_DAYS } from "../constants";
 import { plaidCall } from "./client";
 import { getAccounts } from "../store/accounts";
 import { VERIFY_WINDOW_DAYS } from "../sync/engine";
-import { AccountConfig, Env, PlaidTransaction, normalizePlaidTxn } from "../types";
+import { AccountConfig, Env, PlaidTransaction, QuarantinedPlaidTxn, partitionPlaidTxns } from "../types";
 import { todayInTimeZone } from "../util/dates";
 
 // ---------- Debug endpoints ----------
@@ -93,7 +93,7 @@ export async function plaidItemCached(env: Env, accessToken: string): Promise<an
 
 export async function getRecentRawTransactionsDetailed(
   env: Env, acct: AccountConfig, days: number, count: number
-): Promise<{ transactions: PlaidTransaction[]; truncated: boolean; start_date: string; end_date: string }> {
+): Promise<{ transactions: PlaidTransaction[]; quarantined: QuarantinedPlaidTxn[]; truncated: boolean; start_date: string; end_date: string }> {
   // One read of the longest window anyone needs this run; shorter requests are cut
   // from it.
   const want = Math.max(1, Math.min(100, days));
@@ -106,12 +106,12 @@ export async function getRecentRawTransactionsDetailed(
   }
   const end_date = todayInTimeZone(env);
   const start_date = shiftCalendarDate(end_date, -want);
-  return { ...cached.result, start_date, transactions: cached.result.transactions.filter((t: PlaidTransaction) => t.date >= start_date) };
+  return { ...cached.result, start_date, transactions: cached.result.transactions.filter((t: PlaidTransaction) => t.date >= start_date), quarantined: (cached.result.quarantined || []).filter((q: QuarantinedPlaidTxn) => !q.date || q.date >= start_date) };
 }
 
 export async function fetchRawWindow(
   env: Env, acct: AccountConfig, days: number, count: number
-): Promise<{ transactions: PlaidTransaction[]; truncated: boolean; start_date: string; end_date: string }> {
+): Promise<{ transactions: PlaidTransaction[]; quarantined: QuarantinedPlaidTxn[]; truncated: boolean; start_date: string; end_date: string }> {
   const end_date = todayInTimeZone(env);
   const start_date = shiftCalendarDate(end_date, -Math.max(1, Math.min(100, days)));
   const pageSize = Math.max(1, Math.min(500, count));
@@ -187,8 +187,10 @@ export async function fetchRawWindow(
       JSON.stringify(signature(first.rows)) === JSON.stringify(signature(second.rows));
   }
   const truncated = !stable || first.rows.length < first.total || first.total > MAX_TRANSACTIONS;
+  const { transactions, quarantined } = partitionPlaidTxns(first.rows);
   return {
-    transactions: first.rows.map(normalizePlaidTxn),
+    transactions,
+    quarantined,
     truncated,
     start_date,
     end_date

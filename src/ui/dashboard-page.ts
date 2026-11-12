@@ -1,7 +1,7 @@
-import { NO_FRAMING } from "../util/http";
+import { newCspNonce, pageSecurityHeaders } from "../util/http";
 import { escapeHtml as esc, safeCssClass } from "../util/html";
 
-export function dashboardHtml(): Response {
+export function dashboardHtml(nonce: string = newCspNonce()): Response {
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -148,11 +148,12 @@ export function dashboardHtml(): Response {
   <div id="accountRows" class="card rows"><div class="row"><span class="row-name">Loading…</span></div></div>
 
   <div class="card toolbar">
-    <button id="btnSync" class="btn primary writes" onclick="runSync(this)">Sync now</button>
-    <button id="btnRecheck" class="btn" onclick="recheck(this)" title="Read-only: re-reads the bank and YNAB balances and updates Account health">Re-check</button>
-    <button id="btnRescan" class="btn writes" onclick="rescan(this)" title="Look for bank transactions missing from YNAB, over the chosen number of days">Re-scan</button>
+    <button id="btnSync" class="btn primary writes" data-click="runSync">Sync now</button>
+    <button id="btnRecheck" class="btn" data-click="recheck" title="Read-only: re-reads the bank and YNAB balances and updates Account health">Re-check</button>
+    <button id="btnRescan" class="btn writes" data-click="rescan" title="Look for bank transactions missing from YNAB, over the chosen number of days">Re-scan</button>
     <select id="rescanDays" aria-label="How far back Re-scan looks" title="How far back Re-scan looks"><option value="7" selected>7 days</option><option value="14">14 days</option><option value="30">30 days</option></select>
     <a class="btn" href="https://app.ynab.com/" target="_blank" rel="noopener">Open YNAB ↗</a>
+    <a class="btn ghost" href="https://github.com/MikeAllen1/ynab-sync-plaid/blob/main/docs/GLOSSARY.md" target="_blank" rel="noopener" title="What Sync now, Re-check, Re-scan, Undo and the Activity labels mean">What do these mean? ↗</a>
     <div class="spacer"></div>
     <label class="inline" title="Sync now, Re-scan, Re-check, Transaction reconcile and Activity act on this account">Account <select id="accountSelect"><option value="">All accounts</option></select></label>
     <label class="inline"><input type="checkbox" id="dryRun" checked /> Dry run</label>
@@ -198,7 +199,7 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Transaction reconcile</h2>
       <p class="hint">Read-only, row by row. Each bank transaction is matched to one YNAB row using the same rules as the sync (identity first, then amount + date + payee, one-to-one). Anything left over is listed. Items the worker skips on purpose are listed separately.</p>
-      <div class="actions"><label class="inline">Days <select id="reconDays"><option>7</option><option selected>14</option><option>21</option><option>30</option><option>60</option><option>90</option></select></label><button class="btn primary" onclick="runReconcile(this)">Run reconcile</button></div>
+      <div class="actions"><label class="inline">Days <select id="reconDays"><option>7</option><option selected>14</option><option>21</option><option>30</option><option>60</option><option>90</option></select></label><button class="btn primary" data-click="runReconcile">Run reconcile</button></div>
       <div id="recon" class="list" style="margin-top:14px"></div>
     </div>
   </section>
@@ -209,8 +210,8 @@ export function dashboardHtml(): Response {
       <p class="hint">Bank items the worker should never import. There are none unless you add one: everything that affects a balance is imported. Delete takes effect immediately; edits and new rules need <strong>Save rules</strong>.</p>
       <div id="rules" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addRule()">+ Add rule</button>
-        <button class="btn primary" onclick="saveRules()">Save rules</button>
+        <button class="btn" data-click="addRule">+ Add rule</button>
+        <button class="btn primary" data-click="saveRules">Save rules</button>
       </div>
     </div>
     <div class="block">
@@ -218,8 +219,8 @@ export function dashboardHtml(): Response {
       <p class="hint">When the bank and YNAB name the same merchant differently (an old brand name vs the new one), group the names so they match.</p>
       <div id="aliases" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addAlias()">+ Add group</button>
-        <button class="btn primary" onclick="saveAliases()">Save aliases</button>
+        <button class="btn" data-click="addAlias">+ Add group</button>
+        <button class="btn primary" data-click="saveAliases">Save aliases</button>
       </div>
     </div>
     <div class="block">
@@ -227,8 +228,8 @@ export function dashboardHtml(): Response {
       <p class="hint">Name transfers to and from your own accounts at other banks by the last digits the bank shows (&ldquo;&hellip;1234&rdquo;), so YNAB gets a stable payee it can learn a category for.</p>
       <div id="tlabels" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addTLabel()">+ Add label</button>
-        <button class="btn primary" onclick="saveTLabels()">Save labels</button>
+        <button class="btn" data-click="addTLabel">+ Add label</button>
+        <button class="btn primary" data-click="saveTLabels">Save labels</button>
       </div>
     </div>
   </section>
@@ -237,39 +238,40 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Global sync</h2>
       <p class="hint">Master switch. While paused nothing is written and Plaid is not asked to refresh. Dry runs still work.</p>
-      <div class="actions"><span id="globalState" class="chip">…</span><button id="globalBtn" class="btn warning" onclick="toggleGlobal()">…</button></div>
+      <div class="actions"><span id="globalState" class="chip">…</span><button id="globalBtn" class="btn warning" data-click="toggleGlobal">…</button></div>
     </div>
     <div class="block">
       <h2>Admin token</h2>
       <p class="hint">Stored only in this browser.</p>
-      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" onclick="saveToken()">Save</button><button class="btn ghost" onclick="clearToken()">Clear</button></div></div>
+      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" data-click="saveToken">Save</button><button class="btn ghost" data-click="clearToken">Sign out</button></div></div>
     </div>
     <div class="block">
       <h2>Bank connections</h2>
       <p class="hint">Checked about every 6 hours. "Needs reauth" means the bank must be reconnected before its data goes stale.</p>
       <div id="items" class="list"></div>
-      <div class="actions"><button class="btn" onclick="loadItems(true)">Check now</button><a class="btn" href="/setup" target="_blank" rel="noopener">Reconnect or add a bank ↗</a></div>
+      <div class="actions"><button class="btn" data-click="loadItemsFresh">Check now</button><a class="btn" href="/setup" target="_blank" rel="noopener">Reconnect or add a bank ↗</a></div>
     </div>
     <div class="block">
       <h2>Accounts</h2>
       <p class="hint">Turn syncing on or off, set how often each account syncs, and edit IDs. New banks are added from the setup page. Leave the token blank to keep the current one.</p>
       <div id="accounts" class="list"></div>
-      <div class="actions"><button class="btn primary" onclick="saveAccounts()">Save accounts</button></div>
+      <div class="actions"><button class="btn primary" data-click="saveAccounts">Save accounts</button></div>
     </div>
   </section>
 
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
-      <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" onclick="undo(this)">Undo…</button></div>
-      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" onclick="show('/force-refresh', this, 'POST')">Refresh Plaid</button></div>
-      <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/plaid/raw?account=' + a + '&days=30&count=100'); })">Show</button></div>
-      <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" onclick="tracePending(this)">Explain</button></div>
+      <div class="recovery"><div><strong>Undo a sync</strong><p>Removes the rows a sync added. It does not reverse anything else that sync did (rows it marked posted, pending rows it removed, amounts it updated). Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" data-click="undo">Undo…</button></div>
+      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" data-click="show" data-path="/force-refresh" data-method="POST">Refresh Plaid</button></div>
+      <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" data-click="showPlaidRaw">Show</button></div>
+      <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" data-click="tracePending">Explain</button></div>
       <div id="traceOut"></div>
-      <div class="recovery"><div><strong>Stuck pending rows (saved automatically)</strong><p>Every hourly health check saves the reason whenever a pending row should have moved to posted but didn't, including rows you've since fixed by hand. Kept 30 days after they're resolved.</p></div><button class="btn" onclick="loadStuck(this)">Refresh</button></div>
+      <div class="recovery"><div><strong>Stuck pending rows (saved automatically)</strong><p>Every hourly health check saves the reason whenever a pending row should have moved to posted but didn't, including rows you've since fixed by hand. Kept 30 days after they're resolved.</p></div><button class="btn" data-click="loadStuck">Refresh</button></div>
       <div id="stuckOut"></div>
-      <div class="recovery"><div><strong>What YNAB has</strong><p>The YNAB register for the selected account (30 days), with worker ownership flags.</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/ynab-register?account=' + a + '&days=30'); })">Show</button></div>
-      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" onclick="show('/configure-webhooks', this, 'POST')">Configure</button></div>
-      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" onclick="show('/test-alert', this, 'POST')">Send test</button></div>
+      <div class="recovery"><div><strong>What YNAB has</strong><p>The YNAB register for the selected account (30 days), with worker ownership flags.</p></div><button class="btn" data-click="showYnabRegister">Show</button></div>
+      <div class="recovery"><div><strong>Encrypt bank tokens</strong><p>Encrypts every stored bank token with your TOKEN_ENCRYPTION_KEY secret (or re-encrypts after you rotate it). Needed once after adding the key.</p></div><button class="btn" data-click="show" data-path="/accounts/encrypt-tokens" data-method="POST">Encrypt</button></div>
+      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" data-click="show" data-path="/configure-webhooks" data-method="POST">Configure</button></div>
+      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" data-click="show" data-path="/test-alert" data-method="POST">Send test</button></div>
       <div class="recovery"><div><strong>Live logs</strong><p>From your PC: <code>npx wrangler tail</code> in the project folder.</p></div></div>
     </div>
     <div class="block">
@@ -279,7 +281,7 @@ export function dashboardHtml(): Response {
   </section>
 </main>
 
-<script>
+<script nonce="${nonce}">
 // Browser-side helpers. The server-side escapeHtml/safeCssClass imports don't exist in
 // the page, so the page script needs its own copies (same behavior as src/util/html.ts).
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -307,11 +309,35 @@ async function api(path, opts, raw) {
   // Raw output only shows what you asked to see (Recovery actions and your own
   // actions), not the dashboard's background refreshes.
   if (raw !== false) $("output").textContent = when(new Date().toISOString()) + "  " + path + String.fromCharCode(10) + (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+  if (resp.status === 401) { sessionEnded(); throw new Error("Signed out: your admin session has ended. Enter the admin token under Settings, then try again. Nothing was changed."); }
   if (resp.status === 409 && data && data.busy) throw new Error(data.error);
   if (!resp.ok) throw new Error((data && data.error) || ("HTTP " + resp.status));
   return data;
 }
 function quiet(path) { return api(path, undefined, false); }
+// Sessions last an hour. When one ends (or is signed out elsewhere), say so once and
+// open Settings at the token box, instead of every panel failing with "unauthorized".
+var sessionTimer = null, sessionEndedShown = false;
+function sessionEnded() {
+  if (sessionTimer) { clearTimeout(sessionTimer); sessionTimer = null; }
+  if (sessionEndedShown) return;
+  sessionEndedShown = true;
+  setOverall("Signed out", "");
+  attention(["Your admin session has ended (sessions last an hour). Enter the admin token under Settings to continue. Nothing was changed."], "warn");
+  openTab("settings");
+  try { $("token").focus(); } catch (e) { /* not focusable yet */ }
+}
+// Five minutes before the session ends, say so, so a long edit isn't lost to a 401.
+function trackSession(expiresAt) {
+  sessionEndedShown = false;
+  if (sessionTimer) clearTimeout(sessionTimer);
+  var ms = expiresAt ? new Date(expiresAt).getTime() - Date.now() : NaN;
+  if (!isFinite(ms)) return;
+  sessionTimer = setTimeout(function () {
+    attention(["Your admin session ends in about 5 minutes. Save what you're editing, then enter the admin token under Settings to stay signed in."], "warn");
+    sessionTimer = setTimeout(sessionEnded, 5 * 60 * 1000);
+  }, Math.max(0, ms - 5 * 60 * 1000));
+}
 // Raw-output helper. Actions that change something (webhooks, refresh, test alert) are
 // POST-only on the server, so pass "POST" for those; read-only debug views stay GET.
 async function show(path, btn, method) {
@@ -498,10 +524,11 @@ var EVENT_LABELS = {
   posted_gapfill: "Posted imported", backfill_gapfill: "Posted imported",
   pending_flip_linked: "Pending posted", pending_twin_flip_checking: "Pending posted", duplicate_remove: "Duplicate removed",
   update_failed: "Needs you: update failed", delete_failed: "Needs you: removal failed",
-  import_gave_up: "Needs you: not imported", marked_cleared: "Your entry cleared (posted at bank)", too_old_to_import: "Needs you: too old to import", stuck_pending: "Needs you: pending row stuck", cursor_rebuilt: "Bank history replayed",
-  matched_existing_row: "Already in YNAB (linked to your row)"
+  import_gave_up: "Needs you: not imported", marked_cleared: "Your entry cleared (posted at bank)", too_old_to_import: "Needs you: too old to import", transaction_quarantined: "Needs you: unreadable bank item", stuck_pending: "Needs you: pending row stuck", cursor_rebuilt: "Bank history replayed",
+  matched_existing_row: "Already in YNAB (linked to your row)",
+  matched_by_amount_only: "Check: linked to your row by amount only"
 };
-var NEEDS_YOU = { update_failed: 1, delete_failed: 1, import_gave_up: 1, too_old_to_import: 1, stuck_pending: 1 };
+var NEEDS_YOU = { update_failed: 1, delete_failed: 1, import_gave_up: 1, too_old_to_import: 1, stuck_pending: 1, transaction_quarantined: 1 };
 async function loadEvents() {
   try {
     var d = await quiet("/events?limit=100");
@@ -639,8 +666,8 @@ async function undo(btn) {
     try {
       var list = await api("/undo?list=true");
       if (!list.runs || !list.runs.length) { flash(["Nothing to undo."], "warn"); return; }
-      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s)"; }).join(String.fromCharCode(10));
-      var pick = prompt("Which sync to undo? Enter its number:" + String.fromCharCode(10) + menu, "0");
+      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s) added"; }).join(String.fromCharCode(10));
+      var pick = prompt("Remove the rows which sync added? Enter its number:" + String.fromCharCode(10) + menu, "0");
       if (pick === null) return;
       var preview = await api("/undo?index=" + encodeURIComponent(pick));
       if (!preview.target) { flash([preview.error || "No such sync."], "bad"); return; }
@@ -783,7 +810,7 @@ function renderRules() {
       '<div><span class="field-label">Bank text contains</span><input aria-label="Bank text contains" data-r="' + i + '" data-f="contains" value="' + esc(r.contains) + '" /></div>' +
       '<div><span class="field-label">Only these amounts (optional)</span><input aria-label="Only these amounts (optional)" data-r="' + i + '" data-f="amounts" value="' + esc((r.amounts || []).join(", ")) + '" placeholder="Any amount" /></div>' +
       '<div class="full"><span class="field-label">Why</span><input aria-label="Why" data-r="' + i + '" data-f="reason" value="' + esc(r.reason) + '" /></div>' +
-      '</div><div class="actions"><button class="btn ghost" onclick="deleteRule(' + i + ')">Delete rule</button></div></div>';
+      '</div><div class="actions"><button class="btn ghost" data-click="deleteRule" data-arg="' + i + '">Delete rule</button></div></div>';
   }).join("") : '<div class="empty">No rules. The worker imports everything.</div>';
   $("rules").querySelectorAll("[data-r]").forEach(function (el) {
     el.addEventListener("input", function () {
@@ -819,7 +846,7 @@ function renderAliases() {
   $("aliases").innerHTML = state.aliases.length ? state.aliases.map(function (g, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Merchant</span><input aria-label="Merchant" data-a="' + i + '" data-f="canonical" value="' + esc(g.canonical) + '" /></div>' +
       '<div><span class="field-label">Names that mean it (comma-separated)</span><input aria-label="Names that mean it (comma-separated)" data-a="' + i + '" data-f="patterns" value="' + esc((g.patterns || []).join(", ")) + '" /></div></div>' +
-      '<div class="actions"><button class="btn ghost" onclick="deleteAlias(' + i + ')">Remove group</button></div></div>';
+      '<div class="actions"><button class="btn ghost" data-click="deleteAlias" data-arg="' + i + '">Remove group</button></div></div>';
   }).join("") : '<div class="empty">No aliases.</div>';
   $("aliases").querySelectorAll("[data-a]").forEach(function (el) {
     el.addEventListener("input", function () {
@@ -848,7 +875,7 @@ function renderTLabels() {
   $("tlabels").innerHTML = state.tlabels.length ? state.tlabels.map(function (l, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Last digits</span><input aria-label="Last digits" inputmode="numeric" data-t="' + i + '" data-f="tail" value="' + esc(l.tail) + '" /></div>' +
       '<div><span class="field-label">Payee name</span><input aria-label="Payee name" data-t="' + i + '" data-f="label" value="' + esc(l.label) + '" /></div></div>' +
-      '<div class="actions"><button class="btn ghost" onclick="deleteTLabel(' + i + ')">Remove</button></div></div>';
+      '<div class="actions"><button class="btn ghost" data-click="deleteTLabel" data-arg="' + i + '">Remove</button></div></div>';
   }).join("") : '<div class="empty">No labels.</div>';
   $("tlabels").querySelectorAll("[data-t]").forEach(function (el) {
     el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; });
@@ -884,13 +911,16 @@ async function saveToken() {
     var data = await resp.json();
     if (!resp.ok) throw new Error(data.error || "Authentication failed.");
     $("token").value = "";
+    trackSession(data.expires_at);
     await loadAll(); loadItems(false);
     attention(["Authenticated. The admin token is held in an HttpOnly browser cookie, not Web Storage."], "ok");
   } catch (e) { attention([e.message], "bad"); }
 }
 async function clearToken() {
-  await fetch("/session", { method: "DELETE", credentials: "same-origin" });
-  setOverall("No token", ""); attention(["Admin browser session cleared."], "ok");
+  var d = {};
+  try { d = await (await fetch("/session", { method: "DELETE", credentials: "same-origin" })).json(); } catch (e) { /* cookie is cleared regardless */ }
+  setOverall("No token", "");
+  attention([d && d.signed_out_everywhere ? "Signed out on every browser. Any other open dashboard needs the admin token again." : "This browser's admin session was cleared."], "ok");
 }
 
 async function loadItems(force) {
@@ -971,20 +1001,47 @@ async function saveAccounts() {
     return;
   }
   try {
-    await api("/session", undefined, false);
+    var sess = await api("/session", undefined, false);
+    trackSession(sess && sess.expires_at);
     loadAll();
     loadItems(false);
   } catch (e) {
+    sessionEndedShown = false;
     setOverall("No token", "");
     attention(["Add your admin token under Settings."], "warn");
     openTab("settings");
   }
 })();
+
+// Buttons say what they do with data-click (and data-path / data-method / data-arg),
+// and this one listener runs it from a fixed list. No inline handlers, so the page
+// can run under a CSP that allows only its own nonce-tagged script.
+var CLICK = {
+  runSync: function (el) { runSync(el); }, recheck: function (el) { recheck(el); }, rescan: function (el) { rescan(el); },
+  runReconcile: function (el) { runReconcile(el); }, undo: function (el) { undo(el); },
+  tracePending: function (el) { tracePending(el); }, loadStuck: function (el) { loadStuck(el); },
+  addRule: function () { addRule(); }, saveRules: function () { saveRules(); },
+  addAlias: function () { addAlias(); }, saveAliases: function () { saveAliases(); },
+  addTLabel: function () { addTLabel(); }, saveTLabels: function () { saveTLabels(); },
+  toggleGlobal: function () { toggleGlobal(); }, saveToken: function () { saveToken(); }, clearToken: function () { clearToken(); },
+  saveAccounts: function () { saveAccounts(); }, loadItemsFresh: function () { loadItems(true); },
+  show: function (el) { show(el.getAttribute("data-path"), el, el.getAttribute("data-method") || undefined); },
+  showPlaidRaw: function () { needAccount(function (a) { show("/debug/plaid/raw?account=" + a + "&days=30&count=100"); }); },
+  showYnabRegister: function () { needAccount(function (a) { show("/debug/ynab-register?account=" + a + "&days=30"); }); },
+  deleteRule: function (el, arg) { deleteRule(Number(arg)); }, deleteAlias: function (el, arg) { deleteAlias(Number(arg)); },
+  deleteTLabel: function (el, arg) { deleteTLabel(Number(arg)); }
+};
+document.addEventListener("click", function (ev) {
+  var el = ev.target && ev.target.closest ? ev.target.closest("[data-click]") : null;
+  if (!el || el.disabled) return;
+  var fn = CLICK[el.getAttribute("data-click")];
+  if (fn) fn(el, el.getAttribute("data-arg"));
+});
 </script>
 </body>
 </html>`;
 
   return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING }
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...pageSecurityHeaders(nonce) }
   });
 }

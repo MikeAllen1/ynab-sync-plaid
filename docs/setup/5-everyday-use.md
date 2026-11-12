@@ -7,9 +7,12 @@
 - The top shows whether every account's **bank balance matches YNAB**, any unexplained difference, and the last
   successful sync.
 - **Sync now** runs right away (tick **Dry run** to preview).
-- **Undo…** removes what a sync added (it shows you first).
+- **Undo…** removes the rows a sync added (it shows you first). It doesn't reverse anything else that sync did:
+  rows it marked posted, pending rows it removed, or amounts it updated stay as they are.
 - **Settings → Global sync → Pause all syncing** stops everything until you resume.
 - **Activity** lists what each run did and why something was skipped.
+- Not sure what a button or an Activity label means? See [the glossary](../GLOSSARY.md) (also linked from the
+  dashboard as **What do these mean?**).
 
 ## A bank says "Needs reauth"
 

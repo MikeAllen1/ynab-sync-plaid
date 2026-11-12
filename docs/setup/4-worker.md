@@ -41,6 +41,20 @@ npx wrangler secret put ADMIN_TOKEN
 `ADMIN_TOKEN` is a password you make up (long and random, e.g. from a password manager). Anyone with it can use
 your dashboard, so don't reuse a real password.
 
+Recommended: encrypt your bank tokens at rest. With this set, the Plaid access tokens the worker keeps in KV are
+stored encrypted, so someone who can read your KV namespace still can't use them:
+
+```bash
+openssl rand -base64 32          # copy the output
+npx wrangler secret put TOKEN_ENCRYPTION_KEY
+```
+
+Keep a copy of the key somewhere safe (a password manager): without it, encrypted tokens can't be read and every
+bank would need linking again. If you add the key to a worker that already has banks linked, open the dashboard's
+**Recovery** tab and click **Encrypt bank tokens** once. To rotate it, move the old value to
+`TOKEN_ENCRYPTION_KEY_PREVIOUS`, set a new `TOKEN_ENCRYPTION_KEY`, click **Encrypt bank tokens**, then delete the
+previous key.
+
 Optional email when a bank needs reconnecting or syncing keeps failing, through [Resend](https://resend.com)
 (free tier):
 
@@ -74,6 +88,19 @@ It ends with your worker's address, e.g. `https://ynab-sync.jane.workers.dev`. O
 
 1. **Line up the starting point.** In YNAB, reconcile the account so its cleared balance equals the bank's
    **posted** balance today (pending charges not included).
+
+   Why it matters: the first sync never imports history. What it does depends on what YNAB already has:
+
+   - **A new or hand-kept YNAB account** (nothing imported in the last 30 days): it imports what's pending now and
+     posted charges from **tomorrow** on. Everything older is assumed to be in the starting balance.
+   - **An account YNAB's Direct Import (or an earlier copy of this worker) already fills**: it catches up from a few
+     days before YNAB's newest imported row, matching what's already there instead of duplicating it. Your
+     balance should already be right; just make sure it's reconciled.
+
+   If you skip this step, nothing breaks and nothing is duplicated, but the YNAB balance stays off by whatever
+   the starting balance was missing, and the worker won't fix it for you (it only adds new activity). **Re-check**
+   shows the difference; correct it with a reconciliation adjustment in YNAB for that amount. Don't use Re-scan
+   for it: it only looks back 30 days and stops at the starting point.
 2. On the dashboard: **Settings**, find the account, tick **Sync: the worker writes to this account**, choose
    how often (every 15 minutes to every 4 hours), and click **Save accounts**.
 3. Leave **Dry run** ticked and click **Sync now**. The activity list shows what it *would* do: today's pending
@@ -86,13 +113,15 @@ From then on it runs by itself.
 ## Faster updates (optional)
 
 Plaid can tell the worker the moment a bank has something new (a webhook) instead of waiting for the next
-check:
+check. On the dashboard, open **Recovery** and click **Re-register webhooks**. Or from a terminal:
 
 ```bash
-curl -H "x-admin-token: <your admin token>" https://ynab-sync.jane.workers.dev/configure-webhooks
+curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.jane.workers.dev/configure-webhooks
 ```
 
-Run it again whenever you link another bank.
+Banks linked from `/setup` are registered automatically; this is only needed for banks linked before that, or if the worker's address changed.
+
+Scripts that call the worker's other actions work the same way: send `POST` with the `x-admin-token` header.
 
 ## Tune it for your banks (optional)
 

@@ -1,5 +1,5 @@
 import { TransferLabel, getTransferLabels } from "../rules/transfer-labels";
-import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DAYS, IMPORT_WINDOW_DAYS, MAX_MINT_ATTEMPTS, SNAPSHOT_MARGIN_DAYS, STALE_PENDING_DAYS } from "../constants";
+import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DAYS, IMPORT_WINDOW_DAYS, MAX_MINT_ATTEMPTS, PERMANENT_FAILURE_CURSOR_RELEASE_DAYS, SNAPSHOT_MARGIN_DAYS, STALE_PENDING_DAYS } from "../constants";
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
@@ -8,10 +8,10 @@ import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
 import { logEvent } from "../store/event-log";
-import { ALREADY_IN_YNAB_DATE_DAYS, CARD_PAYMENT_POSTING_DAYS, WORKER_PENDING_PREFIX, cleanName, daysApart, getCcEpoch, leadingWordMatch, namesConflict, namesSimilar, nextOccurrence, normalizeMerchant, plaidPayeeText, prunePostedMap, seedOccurrenceCounts, shortStableHash, ynabImportId } from "./matching";
+import { ALREADY_IN_YNAB_DATE_DAYS, AMOUNT_ONLY_UNNAMED_DATE_DAYS, CARD_PAYMENT_POSTING_DAYS, WORKER_PENDING_PREFIX, cleanName, daysApart, getCcEpoch, hasComparableName, leadingWordMatch, namesConflict, namesSimilar, nextOccurrence, normalizeMerchant, plaidPayeeText, prunePostedMap, seedOccurrenceCounts, shortStableHash, ynabImportId } from "./matching";
 import { accountRefsIn, classifyTransfer, resolveCardForPayment, transferPayeeName, untrackedCardPayee } from "./transfers";
 import { appendUndo, getUndoLog } from "./undo";
-import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
+import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, QuarantinedPlaidTxn, partitionPlaidTxns } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
 import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabGetPlanCurrency, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
@@ -160,7 +160,7 @@ export function institutionWords(a: AccountConfig): string[] {
 
 // A transfer between two of your own (non-card) accounts: the other account the bank
 // text names. It has to look like a transfer, and the other account has to be named
-// as an ACCOUNT ("...1274", "XXXXXX1083", "ACCT 1274", or words you saved), not just
+// as an ACCOUNT ("...4321", "XXXXXX4321", "ACCT 4321", or words you saved), not just
 // contain the digits (a store number, a phone number, a trace number). Money coming IN
 // may also be named by the other bank's name ("ACH DEPOSIT JPMORGAN CHASE"); that only
 // lets it be matched to a transfer already booked, so the looser rule is safe there.
@@ -420,7 +420,14 @@ export function uniqueAmountPairs<T extends { t: PlaidTransaction; inSide?: bool
     // A Direct Import row's id records the bank's own amount and date for the charge
     // ("YNAB:-61470:2026-10-06:1"). When those agree with this charge and it is the
     // only candidate both ways, it IS this charge, whatever you renamed it to in YNAB.
-    if (!isPayment && !r.transfer_transaction_id && !handEnteredSameDay && !directImportIdAgrees(r, item.t, isDirectImport) && namesConflict(plaidPayeeText(item.t), normalizeMerchant(r.payee_name || ""), aliases)) continue;
+    const diAgrees = directImportIdAgrees(r, item.t, isDirectImport);
+    if (!isPayment && !r.transfer_transaction_id && !handEnteredSameDay && !diAgrees && namesConflict(plaidPayeeText(item.t), normalizeMerchant(r.payee_name || ""), aliases)) continue;
+    // Names that can't be compared (no 4+ letter word on one side) are no evidence at
+    // all, so the pairing rests on amount and date alone. Only accept it when the
+    // dates are close; otherwise leave the charge to be imported.
+    if (!isPayment && !r.transfer_transaction_id && !diAgrees &&
+        (!hasComparableName(plaidPayeeText(item.t), aliases) || !hasComparableName(normalizeMerchant(r.payee_name || ""), aliases)) &&
+        daysApart(item.t.date, r.date) > AMOUNT_ONLY_UNNAMED_DATE_DAYS) continue;
     const rivals = leftovers.filter(o => o !== item && near(o.t, r) && paymentLike(o) === isPayment);
     if (rivals.length > 0) continue;
     pairs.push([item, r]);
@@ -610,6 +617,7 @@ export interface PlaidSyncDeltaBatch {
   modified: PlaidTransaction[];
   removedIds: Set<string>;
   cursor: string;
+  quarantined: QuarantinedPlaidTxn[];
 }
 
 /** Fetch one complete Plaid cursor batch; mutation errors restart from the original cursor. */
@@ -617,6 +625,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
   const added: PlaidTransaction[] = [];
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
+  const quarantined: QuarantinedPlaidTxn[] = [];
   const maxPaginationRestarts = 3;
   let cursor = originalCursor;
   let completed = false;
@@ -624,6 +633,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
     added.length = 0;
     modified.length = 0;
     removedIds.clear();
+    quarantined.length = 0;
     let pageCursor = originalCursor;
     let hasMore = true;
     try {
@@ -634,8 +644,11 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
         if (resp.has_more && resp.next_cursor === pageCursor) {
           throw new Error("Plaid /transactions/sync pagination cursor did not advance");
         }
-        added.push(...resp.added.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
-        modified.push(...resp.modified.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        const mine = (rows: any[]) => partitionPlaidTxns((rows || []).filter((t: any) => t?.account_id === acct.plaid_account_id));
+        const a = mine(resp.added), m = mine(resp.modified);
+        added.push(...a.transactions);
+        modified.push(...m.transactions);
+        quarantined.push(...a.quarantined, ...m.quarantined);
         for (const removed of resp.removed) if (removed.account_id === acct.plaid_account_id) removedIds.add(removed.transaction_id);
         pageCursor = resp.next_cursor;
         hasMore = resp.has_more;
@@ -648,7 +661,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
     }
   }
   if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
-  return { added, modified, removedIds, cursor };
+  return { added, modified, removedIds, cursor, quarantined };
 }
 
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
@@ -678,11 +691,13 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const added: PlaidTransaction[] = [];
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
+  const quarantined: QuarantinedPlaidTxn[] = [];
   if (!options.backfillOnly) {
     const batch = await fetchPlaidSyncDeltas(env, acct, cursor);
     added.push(...batch.added);
     modified.push(...batch.modified);
     for (const id of batch.removedIds) removedIds.add(id);
+    quarantined.push(...batch.quarantined);
     cursor = batch.cursor;
   }
 
@@ -705,10 +720,40 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     windowStart = w.start_date;
     windowOk = !w.truncated;
     if (w.truncated) windowNote = `verification window truncated at ${w.transactions.length} transactions; pending retirement paused`;
+    // A quarantined row means the window isn't a complete picture of the account, so
+    // pending rows are not retired on its evidence while that row is in it.
+    const windowQuarantined = (w.quarantined || []).filter(q => q.account_id === pid);
+    if (windowQuarantined.length > 0) {
+      windowOk = false;
+      windowNote = `${windowQuarantined.length} bank transaction(s) set aside as unreadable; pending retirement paused`;
+      for (const q of windowQuarantined) if (!quarantined.some(x => x.transaction_id === q.transaction_id)) quarantined.push(q);
+    }
   } catch (e: any) {
     windowNote = `verification window unavailable (${friendlyErrorMessage(e)}); pending retirement paused`;
   }
   const windowIds = new Set(windowTxns.map(t => t.transaction_id));
+
+  // Quarantined rows: reported once each (Activity, "Needs you"), never imported, and
+  // never allowed to stop the rest of the account or its cursor.
+  if (quarantined.length > 0 && !options.dryRun) {
+    const qKey = `quarantine_logged:${pid}`;
+    const logged: Record<string, string> = await readJson(env, qKey, {});
+    let qChanged = false;
+    for (const q of quarantined) {
+      const id = q.transaction_id || `${q.date}|${q.amount}|${q.name}`;
+      if (logged[id]) continue;
+      logged[id] = todayInTimeZone(env); qChanged = true;
+      logEvent(events, {
+        account: acct.nickname, action: "transaction_quarantined", transaction_id: q.transaction_id || undefined,
+        amount: q.amount == null ? undefined : Math.round(-q.amount * 1000),
+        detail: `${q.name || "Bank transaction"} ${q.date}: the bank sent it in a form the worker can't import safely (${q.reason}). Everything else kept syncing; add this one by hand if it's real.`
+      });
+    }
+    // Forget entries older than the identity horizon so the map can't grow forever.
+    const floor = shiftCalendarDate(todayInTimeZone(env), -IDENTITY_HORIZON_DAYS);
+    for (const [k, d] of Object.entries(logged)) if (d < floor) { delete logged[k]; qChanged = true; }
+    if (qChanged) await env.SYNC_STATE.put(qKey, JSON.stringify(logged));
+  }
 
   // ---- Current state per lifecycle key. Later sources win, posted beats pending. ----
   const current = new Map<string, PlaidTransaction>();
@@ -994,7 +1039,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   for (const [it, r] of uniqueAmountPairs(items.filter(i => !i.row && !!i.spec.row && !i.spec.row.payee_id), snapshot, (r, i) => contentEligible(i.t)(r), ctx.aliases, isDirectImportRow)) {
     if (claimed.has(r.id)) continue;
     claim(it, r, "content_amount"); newLinks[it.L] = r.id;
-    matchedExisting.push({ it, row: r, how: "same amount" });
+    matchedExisting.push({ it, row: r, how: "same amount only" });
   }
 
   // P4 duplicate race: a worker row plus an unowned non-worker row for the same
@@ -1495,7 +1540,8 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   }
   for (const m of matchedExisting) {
     logEvent(events, {
-      account: acct.nickname, action: "matched_existing_row", transaction_id: m.it.t.transaction_id, amount: Math.round(-m.it.t.amount * 1000),
+      // Linked on amount and date alone: listed separately so it's easy to check.
+      account: acct.nickname, action: m.how === "same amount only" ? "matched_by_amount_only" : "matched_existing_row", transaction_id: m.it.t.transaction_id, amount: Math.round(-m.it.t.amount * 1000),
       detail: `${safePayee(m.it.t)} ${m.it.t.date}${m.it.t.pending ? " (pending)" : ""}: already in YNAB as your row "${m.row.payee_name || ""}" dated ${m.row.date} (${m.how}), so no new row. If that row is a different payment, add this one by hand.`
     });
   }
@@ -1517,6 +1563,9 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const failureText = (error: string) => /failed: 4\d\d/.test(error)
     ? `${plainYnabError(error)}. Fix it in YNAB; the rest of the sync continues.`
     : `YNAB was unavailable (${plainYnabError(error)}). The next sync retries it.`;
+  // Values are the first-failure date, with "#released" once the failure stopped
+  // holding the cursor (so that is logged once).
+  const firstFailed = (id: string) => String(prevFailed[id] || today).split("#")[0];
   for (const f of updatedResult.failed) {
     nowFailed[f.id] = prevFailed[f.id] || today;
     if (!prevFailed[f.id]) {
@@ -1529,6 +1578,23 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!prevFailed[f.id]) {
       const d = deletes.find(x => x.row.id === f.id);
       logEvent(events, { account: acct.nickname, action: "delete_failed", transaction_id: f.id, amount: d ? Number(d.row.amount || 0) : undefined, detail: `${d?.row.payee_name || ""}: couldn't remove it. ${failureText(String(f.error || ""))}` });
+    }
+  }
+  // Which failures still hold back the cursor. A permanent refusal (YNAB 4xx) that
+  // has lasted PERMANENT_FAILURE_CURSOR_RELEASE_DAYS no longer does: replaying the
+  // bank delta can't fix it, and holding the cursor made every later run re-read an
+  // ever-growing backlog. The row is still retried each run from the window.
+  const cursorBlockers: string[] = [];
+  for (const f of [...updatedResult.failed, ...deleteErrors]) {
+    const permanent = /failed: 4\d\d/.test(String(f.error || ""));
+    const aged = calendarDaysBetween(firstFailed(f.id), today) >= PERMANENT_FAILURE_CURSOR_RELEASE_DAYS;
+    if (permanent && aged) {
+      if (!String(prevFailed[f.id] || "").includes("#released")) {
+        logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: f.id, detail: `YNAB has refused this change for ${PERMANENT_FAILURE_CURSOR_RELEASE_DAYS}+ days, so it no longer holds up new bank activity. Fix the row in YNAB; the worker keeps retrying it.` });
+      }
+      nowFailed[f.id] = `${firstFailed(f.id)}#released`;
+    } else {
+      cursorBlockers.push(f.id);
     }
   }
   if (anyWrites && JSON.stringify(nowFailed) !== JSON.stringify(prevFailed)) {
@@ -1565,7 +1631,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   await persistPostedMap();
   if (legCacheChanged) await env.SYNC_STATE.put(legCacheKey, JSON.stringify(legCache));
   if (Object.keys(legacyPendingMap).length > 0) await env.SYNC_STATE.delete(pendingKey); // superseded by derived ids + links
-  if (!partial && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
+  if (cursorBlockers.length === 0 && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
   return {
     // "partial": everything else was written, but some updates or removals weren't.
     status: partial ? "partial" : "ok",

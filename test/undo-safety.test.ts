@@ -92,3 +92,14 @@ test("undo retains only failed deletions so the operation can be retried safely"
     globalThis.fetch = originalFetch;
   }
 });
+
+test("the undo preview says it only removes added rows", async () => {
+  const rows = [{ id: "added", account_id: "ynab-checking", import_id: "YNAB:-1000:2026-11-11:1", cleared: "cleared", amount: -1000, date: "2026-11-11" }];
+  const { env } = makeEnv(rows, rows.map(r => ({ id: r.id, account: "checking", import_id: r.import_id })));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ data: { transactions: rows } });
+  try {
+    const preview = await rollbackSync(env, new URL("https://worker.test/undo?index=0"));
+    assert.match(preview.message, /only removes rows the sync added/);
+  } finally { globalThis.fetch = originalFetch; }
+});

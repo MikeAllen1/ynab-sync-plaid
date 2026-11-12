@@ -40,6 +40,10 @@ export const SNAPSHOT_MARGIN_DAYS = 5;
 // A charge whose freshly minted import id YNAB keeps refusing is given up on after
 // this many attempts (and logged), so it can't retry forever.
 export const MAX_MINT_ATTEMPTS = 3;
+// A row YNAB has refused to update or delete (a 4xx) for this many days stops holding
+// back the account's bank cursor. It's still retried every run from the verification
+// window and stays under "Needs you"; it just can't pin the cursor forever.
+export const PERMANENT_FAILURE_CURSOR_RELEASE_DAYS = 3;
 // Don't re-run the full reconciliation audit on every 15-min sync — that reads
 // every account's transactions repeatedly and burns the rate limit. Once an hour
 // is plenty for a reconciliation report; the sync itself still runs every cron.

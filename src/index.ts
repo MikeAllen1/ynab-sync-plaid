@@ -28,7 +28,7 @@ import { auditAccounts } from "./audit/audit";
 import { reconcileAllVsBank } from "./audit/reconcile";
 import { DEFAULT_SKIP_RULES } from "./constants";
 import { STUCK_LOG_KEY, getItemHealth, runItemHealthCheck, sendConnectionAlert, tracePendingRows } from "./health/items";
-import { health, readJson } from "./health/status";
+import { health, healthSummaryForMonitor, readJson } from "./health/status";
 import { isSyncEnabled, lockedJson } from "./lock/lock";
 import { plaidCall } from "./plaid/client";
 import { debugPlaidRawTransactions, resetRunCache } from "./plaid/fetch";
@@ -36,8 +36,10 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountConfiguration, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, resealAccountTokens, saveAccountConfiguration, tokenStorageMode, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
+import { withDurableAccountState } from "./store/durable-state";
+import { openToken, sealToken } from "./util/token-crypto";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
 import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
@@ -48,7 +50,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_SECONDS, NO_FRAMING, bumpSessionEpoch, checkAdminTokenAttempt, constantTimeEqual, createAdminSessionValue, getSessionEpoch, isHeaderAuthenticated, json, newCspNonce, pageSecurityHeaders, requireAdmin, sessionExpiresAt } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -61,6 +63,9 @@ export const workerEntry = {
   // instead of an unhandled exception.
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     resetRunCache();
+    // Per-account sync state lives in the SyncLock Durable Object (strongly
+    // consistent, like the lock that guards it); see store/durable-state.ts.
+    env = withDurableAccountState(env);
     try {
       return await workerEntry.routeFetch(req, env, ctx);
     } catch (e: any) {
@@ -72,6 +77,7 @@ export const workerEntry = {
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     resetRunCache();
+    env = withDurableAccountState(env);
     // Ask Plaid to re-poll the bank, but only for bank logins that have an enabled
     // account due to sync, and never while globally paused. When Plaid finds new data
     // it sends SYNC_UPDATES_AVAILABLE, and that webhook syncs the item's accounts
@@ -125,23 +131,34 @@ export const workerEntry = {
       if (req.method === "POST") {
         if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
         const supplied = req.headers.get("x-admin-token") || "";
-        if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
-        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
-        return new Response(JSON.stringify({ ok: true }), {
+        const refused = await checkAdminTokenAttempt(req, env, supplied);
+        if (refused) return refused;
+        let epoch: number;
+        try { epoch = await getSessionEpoch(env); }
+        catch { return json({ ok: false, error: "The sync lock service (SYNC_LOCK Durable Object) couldn't be reached, so a session can't be issued. Check the Durable Object binding." }, 503); }
+        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN, undefined, epoch);
+        return new Response(JSON.stringify({ ok: true, expires_at: new Date(Date.now() + ADMIN_SESSION_SECONDS * 1000).toISOString() }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionValue)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionValue)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${ADMIN_SESSION_SECONDS}`
           }
         });
       }
       if (req.method === "GET") {
         const unauthorized = await requireAdmin(req, env);
         if (unauthorized) return unauthorized;
-        return json({ ok: true });
+        return json({ ok: true, expires_at: sessionExpiresAt(req) });
       }
       if (req.method === "DELETE") {
-        return new Response(JSON.stringify({ ok: true }), {
+        // Signing out ends every admin session, not just this browser's cookie, when
+        // the caller is signed in. (An unauthenticated DELETE only clears its own
+        // cookie, so it can't be used to sign the owner out.)
+        let signedOutEverywhere = false;
+        if (!(await requireAdmin(req, env))) {
+          try { await bumpSessionEpoch(env); signedOutEverywhere = true; } catch { /* cookie still cleared below */ }
+        }
+        return new Response(JSON.stringify({ ok: true, signed_out_everywhere: signedOutEverywhere }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
@@ -197,7 +214,7 @@ export const workerEntry = {
         return json({ ok: false, error: "webhook verification failed" }, 401);
       }
 
-      const result = await handlePlaidWebhook(rawBody, env, ctx);
+      const result = await handlePlaidWebhook(rawBody, env, ctx, verification);
       return json(result);
     }
 
@@ -205,11 +222,28 @@ export const workerEntry = {
     // exact same-origin Origin on every state-changing API request so a hostile
     // sibling subdomain or cross-site form cannot ride the cookie. Plaid's signed
     // webhook is intentionally handled above and is exempt from this browser check.
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.headers.get("Origin") !== url.origin) {
+    //
+    // A request that carries the x-admin-token header is not riding an ambient
+    // credential: a browser can only attach a custom header cross-origin after a
+    // CORS preflight, which this worker never approves. Scripts and curl send no
+    // Origin, so header-authenticated requests are exempt. requireAdmin then checks
+    // the header itself and never falls back to the cookie when a header is present.
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !isHeaderAuthenticated(req) && req.headers.get("Origin") !== url.origin) {
       return json({ ok: false, error: "same-origin request required" }, 403);
     }
 
     if (url.pathname === "/health") {
+      // Monitors authenticate with the read-only HEALTH_TOKEN and get only the fields
+      // a monitor needs: no account rows, balances or transaction diagnostics, and no
+      // way to change anything. The admin token still gets the full report.
+      const healthToken = req.headers.get("x-health-token");
+      if (healthToken !== null) {
+        if (req.method !== "GET") return json({ error: "GET only" }, 405);
+        if (!env.HEALTH_TOKEN) return json({ error: "HEALTH_TOKEN is not configured" }, 401);
+        if (env.HEALTH_TOKEN === env.ADMIN_TOKEN) return json({ error: "HEALTH_TOKEN must be different from ADMIN_TOKEN" }, 500);
+        if (!constantTimeEqual(healthToken, env.HEALTH_TOKEN)) return json({ error: "unauthorized" }, 401);
+        return json(healthSummaryForMonitor(await health(env)));
+      }
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await health(env));
@@ -457,7 +491,7 @@ export const workerEntry = {
       try {
         const body = await req.json() as any;
         const clientUserId = body.client_user_id || `setup-${Date.now()}`;
-        const redirectUri = (env as any).PLAID_REDIRECT_URI || `${url.origin}/setup`;
+        const redirectUri = env.PLAID_REDIRECT_URI || `${url.origin}/setup`;
 
         // Reconnect (update) mode: when a nickname is supplied we look up that bank's
         // stored access_token server-side and create an UPDATE-mode link token. This
@@ -469,7 +503,11 @@ export const workerEntry = {
           client_name: "YNAB Sync Setup",
           country_codes: ["US"],
           language: "en",
-          redirect_uri: redirectUri
+          redirect_uri: redirectUri,
+          // Register the webhook on the Item from the moment it's created (and re-point
+          // it on a reconnect), so a new bank gets push updates without a separate
+          // "Re-register webhooks" step.
+          webhook: `${env.WORKER_ORIGIN || url.origin}/webhook`
         };
         if (body.nickname) {
           const acct = (await getAccounts(env)).find((a: any) => a.nickname === body.nickname);
@@ -490,6 +528,16 @@ export const workerEntry = {
       } catch (e: any) {
         return json({ ok: false, error: e.message }, 500);
       }
+    }
+
+    // Encrypt (or re-seal with the current key) every stored Plaid token. Run after
+    // setting TOKEN_ENCRYPTION_KEY, and after rotating it.
+    if (url.pathname === "/accounts/encrypt-tokens") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
+      const unauthorized = await requireAdmin(req, env);
+      if (unauthorized) return unauthorized;
+      if (!env.TOKEN_ENCRYPTION_KEY) return json({ ok: false, error: "Set TOKEN_ENCRYPTION_KEY first: openssl rand -base64 32, then npx wrangler secret put TOKEN_ENCRYPTION_KEY." }, 400);
+      return lockedJson(env, async () => ({ ok: true, ...(await resealAccountTokens(env)), token_storage: await tokenStorageMode(env) }));
     }
 
     // Save account config and automation settings together, under the lock, so a
@@ -524,6 +572,7 @@ export const workerEntry = {
         const pendingKey = "pending_link:" + linkId;
         const pending = await readJson(env, pendingKey, null);
         if (!pending?.access_token || !pending?.item_id) return { ok: false, error: "That bank link expired or is invalid. Link the bank again." };
+        pending.access_token = await openToken(env, String(pending.access_token));
         const current = (await getAccounts(env)).find(a => a.nickname === nickname);
         if (!current) return { ok: false, error: "No mapped account named " + nickname + "." };
         if (String(body.confirm_ynab_account_id || "") !== current.ynab_account_id) {
@@ -558,7 +607,7 @@ export const workerEntry = {
         const ex = await plaidCall(env, "/item/public_token/exchange", { public_token: body.public_token });
         const accts = await plaidCall(env, "/accounts/get", { access_token: ex.access_token });
         const linkId = crypto.randomUUID();
-        await env.SYNC_STATE.put(`pending_link:${linkId}`, JSON.stringify({ access_token: ex.access_token, item_id: ex.item_id }), { expirationTtl: 3600 });
+        await env.SYNC_STATE.put(`pending_link:${linkId}`, JSON.stringify({ access_token: await sealToken(env, ex.access_token), item_id: ex.item_id }), { expirationTtl: 3600 });
         return json({
           ok: true,
           link_id: linkId,
@@ -579,6 +628,7 @@ export const workerEntry = {
         const body = await req.json() as any;
         const pending = await readJson(env, `pending_link:${body.link_id}`, null);
         if (!pending) return { ok: false, error: "That bank link expired (1 hour). Link the bank again." };
+        pending.access_token = await openToken(env, String(pending.access_token || ""));
         const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
         const plaidAccountId = String(body.plaid_account_id || "").trim();
         const ynabAccountId = String(body.ynab_account_id || "").trim();
@@ -627,7 +677,8 @@ export const workerEntry = {
     // reconnect calls below carry the admin token the user pastes in. Handles the
     // OAuth redirect that Chase requires.
     if (url.pathname === "/setup") {
-      return new Response(setupHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", ...NO_FRAMING } });
+      const nonce = newCspNonce();
+      return new Response(setupHtml(nonce), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...pageSecurityHeaders(nonce, "setup") } });
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
     // update accounts without editing wrangler.toml or redeploying.
@@ -788,13 +839,13 @@ export const workerEntry = {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      const configured = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
+      const configured = !!env.RESEND_API_KEY && !!env.ALERT_EMAIL_TO;
       if (!configured) {
         return json({
           ok: false,
           error: "Not configured. Set RESEND_API_KEY and ALERT_EMAIL_TO secrets first.",
-          have_api_key: !!(env as any).RESEND_API_KEY,
-          have_to_address: !!(env as any).ALERT_EMAIL_TO
+          have_api_key: !!env.RESEND_API_KEY,
+          have_to_address: !!env.ALERT_EMAIL_TO
         }, 400);
       }
       try {

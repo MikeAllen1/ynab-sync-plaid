@@ -1,3 +1,4 @@
+import { openAccountTokens, sealAccountTokens } from "../util/token-crypto";
 import { DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, DEFAULT_SYNC_FREQUENCY_MINUTES, SYNC_FREQUENCY_OPTIONS } from "../constants";
 import { AccountAutomationSetting, AccountConfig, Env } from "../types";
 
@@ -94,7 +95,7 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
       if (!bundle || !Array.isArray(bundle.accounts)) {
         throw new Error(`${CONFIG_UNREADABLE}: the combined account configuration is unreadable. Nothing was synced.`);
       }
-      return validateAccountMap(bundle.accounts, 'combined account configuration');
+      return openAccountTokens(env, validateAccountMap(bundle.accounts, 'combined account configuration'));
     }
     const raw = await env.SYNC_STATE.get(ACCOUNT_MAP_KV_KEY);
     // Once the account list lives in KV it is the only source: the ACCOUNT_MAP
@@ -102,7 +103,7 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
     if (raw !== null) {
       let parsed: any = undefined;
       try { parsed = JSON.parse(raw); } catch { /* handled below */ }
-      if (Array.isArray(parsed)) return validateAccountMap(parsed, 'saved account map (KV "account_map")');
+      if (Array.isArray(parsed)) return openAccountTokens(env, validateAccountMap(parsed, 'saved account map (KV "account_map")'));
       // Present but unreadable: stop, rather than quietly running on the env seed.
       throw new Error(`${CONFIG_UNREADABLE}: the saved account list (KV "account_map") can't be read. Nothing was synced. Re-save your accounts in Settings, or restore account_map.`);
     }
@@ -128,10 +129,10 @@ export async function putAccounts(env: Env, accounts: AccountConfig[]): Promise<
     if (!bundle || !Array.isArray(bundle.accounts) || !Array.isArray(bundle.settings)) {
       throw new Error(`${CONFIG_UNREADABLE}: combined account configuration can't be updated.`);
     }
-    await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ ...bundle, accounts }, null, 2));
+    await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ ...bundle, accounts: await sealAccountTokens(env, accounts) }, null, 2));
     return;
   }
-  await env.SYNC_STATE.put(ACCOUNT_MAP_KV_KEY, JSON.stringify(accounts, null, 2));
+  await env.SYNC_STATE.put(ACCOUNT_MAP_KV_KEY, JSON.stringify(await sealAccountTokens(env, accounts), null, 2));
 }
 
 // Merge edited accounts into the stored map. A blank token keeps the stored one, so
@@ -430,7 +431,7 @@ export async function saveAccountConfiguration(env: Env, incomingAccounts: any[]
       await env.SYNC_STATE.delete(`cursor:${acct.plaid_account_id}`);
     }
   }
-  await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ version: 1, accounts, settings }, null, 2));
+  await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ version: 1, accounts: await sealAccountTokens(env, accounts), settings }, null, 2));
   return { accounts, settings };
 }
 
@@ -539,4 +540,25 @@ export async function migratePlaidAccountIdentity(
     ynab_account_id: current.ynab_account_id,
     migration_id: migrationId
   };
+}
+
+// Re-save every account's token with the current TOKEN_ENCRYPTION_KEY: encrypts
+// tokens saved before the key was set, and re-seals ones sealed with the previous key.
+export async function resealAccountTokens(env: Env): Promise<{ accounts: number; encrypted: boolean }> {
+  const accounts = await getAccounts(env);
+  await putAccounts(env, accounts);
+  return { accounts: accounts.length, encrypted: !!env.TOKEN_ENCRYPTION_KEY };
+}
+
+/** How the stored bank tokens are held right now: "encrypted", "plaintext" or "mixed". */
+export async function tokenStorageMode(env: Env): Promise<"encrypted" | "plaintext" | "mixed" | "none"> {
+  const raw = (await env.SYNC_STATE.get(ACCOUNT_CONFIG_BUNDLE_KEY)) ?? (await env.SYNC_STATE.get(ACCOUNT_MAP_KV_KEY));
+  if (raw === null) return "none";
+  let parsed: any;
+  try { parsed = JSON.parse(raw); } catch { return "none"; }
+  const list: any[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.accounts) ? parsed.accounts : [];
+  const tokens = list.map(a => String(a?.plaid_access_token || "")).filter(Boolean);
+  if (tokens.length === 0) return "none";
+  const sealed = tokens.filter(t => t.startsWith("enc:v1:")).length;
+  return sealed === tokens.length ? "encrypted" : sealed === 0 ? "plaintext" : "mixed";
 }

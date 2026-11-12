@@ -149,7 +149,7 @@ export async function rollbackSync(env: Env, url: URL): Promise<any> {
       target: { index: idx, ts: batch.ts, trigger: batch.trigger, count: batch.count },
       would_delete: deletable.slice(0, 100),
       would_keep: kept.slice(0, 100),
-      message: `This would delete ${deletable.length} of ${batch.count} transaction(s) created by the "${batch.trigger}" sync at ${batch.ts}${kept.length ? ` (${kept.length} kept: settled, reconciled or gone)` : ""}.\n\nPosted rows removed here won't be re-imported: YNAB remembers their import ids, and the worker treats them as deleted on purpose. A pending row removed here comes back once the charge posts.`,
+      message: `This would delete ${deletable.length} of ${batch.count} transaction(s) created by the "${batch.trigger}" sync at ${batch.ts}${kept.length ? ` (${kept.length} kept: settled, reconciled or gone)` : ""}.\n\nPosted rows removed here won't be re-imported: YNAB remembers their import ids, and the worker treats them as deleted on purpose. A pending row removed here comes back once the charge posts.\n\nUndo only removes rows the sync added. Anything else that sync did stays as it is: rows it marked posted, pending rows it removed, and amounts or dates it updated.`,
       reimport_note: "Posted rows removed by undo are not re-imported."
     };
   }

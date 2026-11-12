@@ -3,7 +3,7 @@ import { STUCK_LOG_KEY, StuckEntry, getItemHealth } from "./items";
 import { isSyncEnabled } from "../lock/lock";
 import { getWebhookHistory } from "../plaid/webhooks";
 import { getSkipRules } from "../rules/skip-rules";
-import { CONFIG_UNREADABLE, getAccountAutomationSettings, getAccounts, settingForAccount } from "../store/accounts";
+import { CONFIG_UNREADABLE, getAccountAutomationSettings, getAccounts, settingForAccount, tokenStorageMode } from "../store/accounts";
 import { Env, ItemHealth } from "../types";
 
 // ---------- Status / health ----------
@@ -141,6 +141,9 @@ export async function healthReport(env: Env): Promise<any> {
     // is missing from wrangler.toml and overlapping runs are only mostly prevented.
     lock_mode: env.SYNC_LOCK ? "durable-object" : "missing-required-binding",
     worker_version: WORKER_VERSION,
+    // How Plaid access tokens are stored in KV: "encrypted" (TOKEN_ENCRYPTION_KEY set
+    // and applied), "plaintext", or "mixed" (run Encrypt tokens / POST /accounts/encrypt-tokens).
+    token_storage: await tokenStorageMode(env).catch(() => "unknown"),
     status: statusReport
   };
 }
@@ -230,4 +233,15 @@ export async function readJson(env: Env, key: string, fallback: any): Promise<an
   } catch {
     return fallback;
   }
+}
+
+/** The subset of /health an unattended monitor needs, for the read-only HEALTH_TOKEN. */
+export function healthSummaryForMonitor(h: any): any {
+  return {
+    ok: h?.ok === true,
+    health_status: h?.health_status ?? null,
+    sync_enabled: h?.sync_enabled ?? null,
+    lock_mode: h?.lock_mode ?? null,
+    overdue_accounts: Array.isArray(h?.overdue_accounts) ? h.overdue_accounts : null
+  };
 }

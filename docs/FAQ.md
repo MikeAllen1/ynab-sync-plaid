@@ -12,8 +12,8 @@ It only adds rows for new bank activity, and it only **edits or deletes rows it 
 typed in, or one Direct Import added, is matched and linked, never deleted. The one change it makes to such a
 row is marking it **cleared** once the bank posts that charge at the same amount, as Direct Import would;
 payee, category, memo, amount and date stay as you entered them. Reconciled rows are never touched. It doesn't touch anything
-older than its import window (7 days by default; the first sync starts from today's pending charges). Every
-sync can be undone from the dashboard, and **Dry run** shows what a sync would do before it does it.
+older than its import window (7 days by default; the first sync starts from today's pending charges). The rows any
+sync added can be removed again from the dashboard (*Undo…*; it doesn't reverse flips, removals or updates), and **Dry run** shows what a sync would do before it does it.
 
 ### Do I need to turn off YNAB's Direct Import?
 

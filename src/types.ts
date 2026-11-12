@@ -5,6 +5,13 @@ export interface Env {
   PLAID_SECRET: string;
   YNAB_TOKEN: string;
   ADMIN_TOKEN: string;
+  // Optional. A separate, read-only credential for uptime monitors: it can read a
+  // minimal /health summary and nothing else. Must differ from ADMIN_TOKEN.
+  HEALTH_TOKEN?: string;
+  // Optional. Base64 of 32 random bytes; when set, Plaid access tokens are stored in
+  // KV encrypted (AES-256-GCM). _PREVIOUS is accepted for reading during a rotation.
+  TOKEN_ENCRYPTION_KEY?: string;
+  TOKEN_ENCRYPTION_KEY_PREVIOUS?: string;
 
   PLAID_ENV: string;
   YNAB_BUDGET_ID: string;
@@ -28,6 +35,15 @@ export interface Env {
   // Optional. "off" stops asking Plaid to re-check banks (/transactions/refresh), which
   // paid Plaid plans bill per call. Default: on.
   PLAID_REFRESH?: string;
+  // Optional. The worker's public origin (https://ynab-sync.<you>.workers.dev), used for
+  // links in alert emails and the webhook URL given to Plaid.
+  WORKER_ORIGIN?: string;
+  // Optional. Overrides the Plaid Link OAuth redirect (default: <origin>/setup).
+  PLAID_REDIRECT_URI?: string;
+  // Optional email alerts through Resend (https://resend.com).
+  RESEND_API_KEY?: string;
+  ALERT_EMAIL_TO?: string;
+  ALERT_EMAIL_FROM?: string;
 }
 
 export interface AccountConfig {
@@ -112,6 +128,39 @@ export function normalizePlaidTxn(t: any): PlaidTransaction {
     pfc_primary: t.pfc_primary ?? t.personal_finance_category?.primary ?? null,
     pfc_detailed: t.pfc_detailed ?? t.personal_finance_category?.detailed ?? null
   };
+}
+
+// A Plaid row the worker can't safely represent (no ISO currency, more precision
+// than YNAB's milliunits, missing identity fields). It is set aside and reported
+// instead of failing the whole account: one bad row must never stop every other
+// charge on the account from syncing, or pin its bank cursor.
+export interface QuarantinedPlaidTxn {
+  transaction_id: string;
+  account_id: string;
+  date: string;
+  amount: number | null;
+  name: string;
+  reason: string;
+}
+
+export function partitionPlaidTxns(rows: any[]): { transactions: PlaidTransaction[]; quarantined: QuarantinedPlaidTxn[] } {
+  const transactions: PlaidTransaction[] = [];
+  const quarantined: QuarantinedPlaidTxn[] = [];
+  for (const raw of rows || []) {
+    try {
+      transactions.push(normalizePlaidTxn(raw));
+    } catch (e: any) {
+      quarantined.push({
+        transaction_id: typeof raw?.transaction_id === "string" ? raw.transaction_id : "",
+        account_id: typeof raw?.account_id === "string" ? raw.account_id : "",
+        date: typeof raw?.date === "string" ? raw.date : "",
+        amount: typeof raw?.amount === "number" && Number.isFinite(raw.amount) ? raw.amount : null,
+        name: typeof raw?.merchant_name === "string" && raw.merchant_name ? raw.merchant_name : typeof raw?.name === "string" ? raw.name : "",
+        reason: String(e?.message || e)
+      });
+    }
+  }
+  return { transactions, quarantined };
 }
 
 export interface YNABTransaction {
