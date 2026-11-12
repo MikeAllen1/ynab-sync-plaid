@@ -4,6 +4,11 @@ name = "ynab-sync"
 main = "src/index.ts"
 compatibility_date = "2025-10-01"
 
+# Keep the worker's logs (one line per sync run, plus any errors) in the Cloudflare dashboard:
+# Workers & Pages > your worker > Logs. Included in the Free plan.
+[observability]
+enabled = true
+
 # Cron: every 15 minutes (each account still syncs on its own interval, set on the dashboard).
 [triggers]
 crons = ["*/15 * * * *"]

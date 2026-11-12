@@ -24,3 +24,8 @@ Things it doesn't do, or does only partly. If one of these matters to you, an is
   with more decimal places than YNAB stores can't be imported either; add those by hand.
 - **Banks that need re-authorization** (every few months for some) stop syncing until you reconnect on
   `/setup`. Set up email alerts to hear about it.
+- **Cloudflare's Free plan allows 50 outbound requests per run.** An ordinary account sync makes about 6, so a
+  run covers roughly 7 accounts; the rest sync on the next run, 15 minutes later. A bank that replays more
+  history at once than one run can read (more than about 20,000 transactions in its feed, after a long
+  outage) keeps failing with a "more new activity than one run can read" error; other banks still sync.
+  On Workers Paid, raise the `SUBREQUEST_BUDGET` var.

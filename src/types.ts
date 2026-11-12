@@ -26,6 +26,8 @@ export interface Env {
   // Optional. If set, the Worker POSTs a JSON alert here when sync health
   // changes state (e.g. healthy -> error, or recovers). No-op when unset.
   ALERT_WEBHOOK_URL?: string;
+  /** Outbound requests one invocation may spend (default 45: the Free plan allows 50). Raise it on Workers Paid. */
+  SUBREQUEST_BUDGET?: string;
   // Optional. IANA timezone used for calendar-day math (stale-pending aging).
   // Defaults to UTC; set it so day boundaries match your local time.
   TIMEZONE?: string;

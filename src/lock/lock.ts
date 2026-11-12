@@ -55,14 +55,39 @@ export async function acquireSyncLock(env: Env): Promise<LockHandle | null> {
 export const activeLeases = new Map<string, { env: Env; lock: LockHandle; renewedAt: number }>();
 export const LEASE_RENEW_EVERY_MS = 60 * 1000;
 
+// Which lease an operation's env belongs to. holdLease tags the env the operation passes
+// down (a symbol property, so `{ ...env }` copies keep it), and the Plaid and YNAB clients
+// hand that env to fetchWithRetry. An API call then renews only its own operation's lease.
+//
+// Why it matters: an operation whose invocation is cancelled (a cron run stopped at the
+// 15-minute limit, a dashboard request whose tab was closed) never reaches its `finally`,
+// so its lease stays in this isolate's map. Its lock expires and the next run takes over;
+// if every API call renewed every lease in the map, that next run would try to renew the
+// abandoned one, be told "no longer owned", and abort, and so would every run after it
+// in the same isolate.
+export const LEASE_OWNER = Symbol.for("ynab-sync.lease-owner");
+
 export function holdLease(env: Env, lock: LockHandle): void {
   activeLeases.set(lock.id, { env, lock, renewedAt: Date.now() });
+  try { (env as any)[LEASE_OWNER] = lock.id; } catch { /* frozen env: falls back to renewing every lease */ }
 }
 export function dropLease(lock: LockHandle): void {
   activeLeases.delete(lock.id);
 }
-export async function keepLeaseAlive(): Promise<void> {
+/**
+ * Renew leases that are due. With the calling operation's env (tagged by holdLease), only
+ * that operation's lease is renewed, and a lost lease aborts only that operation. Without
+ * a tagged env (older callers), every lease held in this isolate is renewed.
+ */
+export async function keepLeaseAlive(owner?: Env): Promise<void> {
   const now = Date.now();
+  const ownId = owner ? (owner as any)[LEASE_OWNER] as string | undefined : undefined;
+  if (ownId !== undefined) {
+    const lease = activeLeases.get(ownId);
+    if (lease && now - lease.renewedAt >= LEASE_RENEW_EVERY_MS) await renewSyncLock(lease.env, lease.lock);
+    return;
+  }
+  if (owner) return;   // an operation that holds no lock has nothing to renew
   for (const lease of activeLeases.values()) {
     if (now - lease.renewedAt < LEASE_RENEW_EVERY_MS) continue;
     await renewSyncLock(lease.env, lease.lock);

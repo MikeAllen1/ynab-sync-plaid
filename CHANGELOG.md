@@ -26,6 +26,24 @@ Fixes from a workflow audit of the dashboard and setup page:
   results for a previous account choice are cleared when you pick another.
 - `npm run test:browser`: end-to-end browser tests for these workflows (needs Chrome).
 
+Reliability fixes from a failure-mode and load review (`test/failure-modes.test.ts`, `scripts/bench/`).
+
+- A provider that times out twice is skipped for the rest of that run, so a Plaid or YNAB outage costs
+  one run two deadlines instead of one per call (which could outlast the cron's time limit).
+- A run whose invocation was cancelled part-way (a webhook sync cut off 30 seconds after its response,
+  a closed dashboard tab, a cron run stopped at its time limit) could make every later sync in the same Cloudflare isolate abort with "SYNC_LOCK lease
+  is no longer owned by this run" until the isolate was recycled. Each run now renews only its own lease.
+- Runs stay inside the Free plan's 50 outbound requests per invocation: accounts that don't fit wait
+  for the next run (oldest first; banks that failed last time go last) instead of failing with
+  "Too many subrequests". With about 9 or more accounts syncing every 15 minutes, most runs used to fail.
+  Set `SUBREQUEST_BUDGET` higher on Workers Paid.
+- Accounts at the same bank login share each Plaid feed page within a run instead of each reading
+  the whole feed (three accounts at one bank used three times the requests).
+- One structured log line per sync run (status, per-account outcome, requests used, duration; no
+  amounts or payees), and `[observability]` turned on in `wrangler.toml.example` so Cloudflare keeps
+  the logs. Copy that block into your own `wrangler.toml`.
+- Faster matching against large YNAB windows (about 60% less CPU per run with a busy register).
+
 ## 1.0.0 — 2026-11-11
 
 First public release.

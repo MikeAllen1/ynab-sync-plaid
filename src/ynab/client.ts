@@ -4,7 +4,7 @@ import { fetchWithRetry, readJsonBody } from "../util/http";
 import { reserveYnabRequest } from "../lock/lock";
 
 async function ynabFetchWithRetry(env: Env, url: string, init: RequestInit): Promise<Response> {
-  return fetchWithRetry(url, init, 2, { beforeAttempt: () => reserveYnabRequest(env) });
+  return fetchWithRetry(url, init, 2, { beforeAttempt: () => reserveYnabRequest(env), env });
 }
 
 export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Promise<any> {

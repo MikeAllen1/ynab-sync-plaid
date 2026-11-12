@@ -3,7 +3,7 @@ import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DA
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
-import { getRecentRawTransactionsDetailed, lookbackDate, shiftCalendarDate, toIsoDate } from "../plaid/fetch";
+import { getRecentRawTransactionsDetailed, runCache, lookbackDate, shiftCalendarDate, toIsoDate } from "../plaid/fetch";
 import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
@@ -332,8 +332,9 @@ export function contentMatch(
   let bestDays = Infinity;
   let equallyClose = false;
   for (const e of rows) {
-    if (!isEligible(e)) continue;
+    // Cheap amount test first: isEligible walks ownership maps and runs for every row.
     if (Number(e.amount || 0) !== milli) continue;
+    if (!isEligible(e)) continue;
     // Money the bank says came from your Chase account is never your transfer from
     // some other account (Savings) that happens to have the same amount.
     if (spec.transferFrom && e.transfer_transaction_id && e.transfer_account_id && e.transfer_account_id !== spec.transferFrom) continue;
@@ -411,7 +412,7 @@ export function uniqueAmountPairs<T extends { t: PlaidTransaction; inSide?: bool
     // with non-transfer rows.
     const isPayment = paymentLike(item);
     const kindOk = (r: YNABExistingTransaction) => isPayment ? !!r.transfer_transaction_id : !r.transfer_transaction_id;
-    const cands = rows.filter(r => kindOk(r) && isEligible(r, item) && near(item.t, r));
+    const cands = rows.filter(r => kindOk(r) && near(item.t, r) && isEligible(r, item));
     if (cands.length !== 1) continue;
     const r = cands[0];
     // Names that clearly contradict each other are never paired on amount alone
@@ -449,7 +450,7 @@ export function directImportPairs<T extends { t: PlaidTransaction; inSide?: bool
   for (const item of items) {
     if (item.inSide || classifyTransfer(item.t) === "card_payment") continue;
     for (const r of rows) {
-      if (r.transfer_transaction_id || !isEligible(r, item) || !directImportIdAgrees(r, item.t, isDirectImport)) continue;
+      if (r.transfer_transaction_id || !directImportIdAgrees(r, item.t, isDirectImport) || !isEligible(r, item)) continue;
       edges.push({ item, r, k: [daysApart(idDate(r), item.t.date), daysApart(r.date, item.t.date)] });
     }
   }
@@ -550,13 +551,6 @@ export function buildOwnership(
   // that act on "Plaid removed this charge" (reuse the row, or retire it) can see it.
   for (const k of removedPendingIds) own(byImport.get(expectedPendingImportId(acct, k, epoch)), k);
 
-  const identities = (t: PlaidTransaction) => {
-    const L = lifecycleKey(t);
-    const ids = new Set<string>([L, "tx:" + t.transaction_id]);
-    if (t.pending_transaction_id) ids.add(t.pending_transaction_id);
-    return ids;
-  };
-
   return {
     ownerOf,
     rowFor(t) {
@@ -582,7 +576,8 @@ export function buildOwnership(
       const owner = ownerOf.get(row.id);
       if (!owner) return false;
       if (!t) return true;
-      return !identities(t).has(owner);
+      // Same test as identities(t).has(owner), without building a Set per row checked.
+      return owner !== lifecycleKey(t) && owner !== "tx:" + t.transaction_id && owner !== t.pending_transaction_id;
     }
   };
 }
@@ -620,6 +615,27 @@ export interface PlaidSyncDeltaBatch {
   quarantined: QuarantinedPlaidTxn[];
 }
 
+/**
+ * One /transactions/sync page. Plaid's feed is per bank login, not per account, so every
+ * account at the same bank reads the same pages: when their cursors agree (the usual
+ * case), the page is read once per run and shared. Without that, a bank with three
+ * linked accounts cost three times the outbound requests, and the Free plan allows 50
+ * per invocation. A page that failed is never shared, and a pagination restart
+ * (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION) always reads fresh pages.
+ */
+async function syncPage(env: Env, token: string, cursor: string, shareable: boolean): Promise<any> {
+  const read = () => plaidCall(env, "/transactions/sync", { access_token: token, cursor, count: 500 });
+  if (!shareable) return read();
+  const key = `plaid_sync_page:${token}:${cursor}`;
+  let p = runCache.get(key) as Promise<any> | undefined;
+  if (!p) {
+    p = read();
+    runCache.set(key, p);
+    p.catch(() => { if (runCache.get(key) === p) runCache.delete(key); });
+  }
+  return p;
+}
+
 /** Fetch one complete Plaid cursor batch; mutation errors restart from the original cursor. */
 export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, originalCursor: string): Promise<PlaidSyncDeltaBatch> {
   const added: PlaidTransaction[] = [];
@@ -638,9 +654,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
     let hasMore = true;
     try {
       while (hasMore) {
-        const resp = await plaidCall(env, "/transactions/sync", {
-          access_token: acct.plaid_access_token, cursor: pageCursor, count: 500
-        });
+        const resp = await syncPage(env, acct.plaid_access_token, pageCursor, attempt === 0);
         if (resp.has_more && resp.next_cursor === pageCursor) {
           throw new Error("Plaid /transactions/sync pagination cursor did not advance");
         }
@@ -1694,7 +1708,8 @@ export async function representPlaid(
       inflows.filter(o => o !== t && !rowByTx.has(o.transaction_id) && !specByTx.get(o.transaction_id)!.transferFrom));
     if (leg) { claimed.add(leg.id); rowByTx.set(t.transaction_id, leg); }
   }
-  const diRow = (r: YNABExistingTransaction) => String(r.import_id || "").startsWith("YNAB:") && !isWorkerImportPrefix(r.import_id) && !Object.values(postedMap).includes(String(r.import_id));
+  const mintedIds = new Set(Object.values(postedMap).map(String));
+  const diRow = (r: YNABExistingTransaction) => String(r.import_id || "").startsWith("YNAB:") && !isWorkerImportPrefix(r.import_id) && !mintedIds.has(String(r.import_id));
   const diCands = ordered.filter(t => !rowByTx.has(t.transaction_id) && !specByTx.get(t.transaction_id)?.skip && !!specByTx.get(t.transaction_id)?.row && !specByTx.get(t.transaction_id)?.row?.payee_id).map(t => ({ t }));
   for (const [{ t }, r] of directImportPairs(diCands, register, (r, i) => !claimed.has(r.id) && !isWorkerPendingRow(r) && !own.isOwnedByOther(r, i.t) && !(i.t.pending && r.cleared !== "uncleared"), diRow)) {
     if (claimed.has(r.id) || rowByTx.has(t.transaction_id)) continue;
@@ -1770,7 +1785,7 @@ export async function bootstrap(env: Env, nickname: string, runId?: string, forc
   let cursor = "";
   let hasMore = true;
   while (hasMore) {
-    const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
+    const resp = await syncPage(env, acct.plaid_access_token, cursor, true);
     if (!resp || !Array.isArray(resp.added) || !Array.isArray(resp.modified) ||
         !Array.isArray(resp.removed) || typeof resp.next_cursor !== "string" ||
         typeof resp.has_more !== "boolean") {
