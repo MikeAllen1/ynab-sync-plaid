@@ -38,7 +38,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   }
 });
 
-test("Plaid transaction window rejects an empty page before provider total is reached", async () => {
+test("Plaid transaction window marks an empty page before provider total as incomplete", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -46,8 +46,10 @@ test("Plaid transaction window rejects an empty page before provider total is re
     return Response.json({ transactions: [], total_transactions: 100 });
   };
   try {
-    await assert.rejects(() => fetchRawWindow(env, account, 30, 2), /empty page before total_transactions was reached/);
+    const result = await fetchRawWindow(env, account, 30, 2);
     assert.equal(calls, 1);
+    assert.equal(result.transactions.length, 0);
+    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
