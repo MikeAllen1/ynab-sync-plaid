@@ -116,6 +116,9 @@ export function dashboardHtml(): Response {
     .recovery p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
     pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: var(--r-md); overflow: auto; max-height: 460px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     .small { font-size: 12px; color: var(--muted); }
+    .initially-hidden { display:none; } .mt-14 { margin-top:14px; } .no-margin { margin:0; }
+    .m-6-0-12 { margin:6px 0 12px; } .m-8-0-14 { margin:8px 0 14px; }
+    .p-10-14-0 { padding:10px 14px 0; } .p-0-14-10 { padding:0 14px 10px; }
     .money-neg { color: var(--bad); } .money-pos { color: var(--ok); }
     @media (max-width: 760px) {
       .shell { padding: 24px 16px 60px; }
@@ -143,15 +146,15 @@ export function dashboardHtml(): Response {
     <div class="kpi"><div class="kpi-label">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
   </div>
 
-  <div id="flash" class="flash" role="status" aria-live="polite" style="display:none"></div>
-  <section id="attention" class="attention" role="status" aria-live="polite" style="display:none"></section>
+  <div id="flash" class="flash" role="status" aria-live="polite" class="initially-hidden"></div>
+  <section id="attention" class="attention" role="status" aria-live="polite" class="initially-hidden"></section>
 
   <div id="accountRows" class="card rows"><div class="row"><span class="row-name">Loading…</span></div></div>
 
   <div class="card toolbar">
-    <button id="btnSync" class="btn primary writes" onclick="runSync(this)">Sync now</button>
-    <button id="btnRecheck" class="btn" onclick="recheck(this)" title="Read-only: re-reads the bank and YNAB balances and updates Account health">Re-check</button>
-    <button id="btnRescan" class="btn writes" onclick="rescan(this)" title="Look for bank transactions missing from YNAB, over the chosen number of days">Re-scan</button>
+    <button id="btnSync" class="btn primary writes" data-action="run-sync">Sync now</button>
+    <button id="btnRecheck" class="btn" data-action="recheck" title="Read-only: re-reads the bank and YNAB balances and updates Account health">Re-check</button>
+    <button id="btnRescan" class="btn writes" data-action="rescan" title="Look for bank transactions missing from YNAB, over the chosen number of days">Re-scan</button>
     <select id="rescanDays" aria-label="How far back Re-scan looks" title="How far back Re-scan looks"><option value="7" selected>7 days</option><option value="14">14 days</option><option value="30">30 days</option></select>
     <a class="btn" href="https://app.ynab.com/" target="_blank" rel="noopener">Open YNAB ↗</a>
     <div class="spacer"></div>
@@ -170,7 +173,7 @@ export function dashboardHtml(): Response {
   </nav>
 
   <section id="tab-activity" role="tabpanel" aria-label="activity" class="panel active">
-    <div class="block" id="previewBlock" style="display:none">
+    <div class="block" id="previewBlock" class="initially-hidden">
       <h2>Dry-run preview</h2>
       <p class="hint">What a live run would do right now. Nothing below has been changed.</p>
       <div id="preview"></div>
@@ -199,8 +202,8 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Transaction reconcile</h2>
       <p class="hint">Read-only, row by row. Each bank transaction is matched to one YNAB row using the same rules as the sync (identity first, then amount + date + payee, one-to-one). Anything left over is listed. Items the worker skips on purpose are listed separately.</p>
-      <div class="actions"><label class="inline">Days <select id="reconDays"><option>7</option><option selected>14</option><option>21</option><option>30</option><option>60</option><option>90</option></select></label><button class="btn primary" onclick="runReconcile(this)">Run reconcile</button></div>
-      <div id="recon" class="list" style="margin-top:14px"></div>
+      <div class="actions"><label class="inline">Days <select id="reconDays"><option>7</option><option selected>14</option><option>21</option><option>30</option><option>60</option><option>90</option></select></label><button class="btn primary" data-action="run-reconcile">Run reconcile</button></div>
+      <div id="recon" class="list" class="mt-14"></div>
     </div>
   </section>
 
@@ -210,8 +213,8 @@ export function dashboardHtml(): Response {
       <p class="hint">Bank items the worker should never import. There are none unless you add one: everything that affects a balance is imported. Delete takes effect immediately; edits and new rules need <strong>Save rules</strong>.</p>
       <div id="rules" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addRule()">+ Add rule</button>
-        <button class="btn primary" onclick="saveRules()">Save rules</button>
+        <button class="btn" data-action="add-rule">+ Add rule</button>
+        <button class="btn primary" data-action="save-rules">Save rules</button>
       </div>
     </div>
     <div class="block">
@@ -219,8 +222,8 @@ export function dashboardHtml(): Response {
       <p class="hint">When the bank and YNAB name the same merchant differently (an old brand name vs the new one), group the names so they match.</p>
       <div id="aliases" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addAlias()">+ Add group</button>
-        <button class="btn primary" onclick="saveAliases()">Save aliases</button>
+        <button class="btn" data-action="add-alias">+ Add group</button>
+        <button class="btn primary" data-action="save-aliases">Save aliases</button>
       </div>
     </div>
     <div class="block">
@@ -228,8 +231,8 @@ export function dashboardHtml(): Response {
       <p class="hint">Name transfers to and from your own accounts at other banks by the last digits the bank shows (&ldquo;&hellip;1234&rdquo;), so YNAB gets a stable payee it can learn a category for.</p>
       <div id="tlabels" class="list"></div>
       <div class="actions">
-        <button class="btn" onclick="addTLabel()">+ Add label</button>
-        <button class="btn primary" onclick="saveTLabels()">Save labels</button>
+        <button class="btn" data-action="add-transfer-label">+ Add label</button>
+        <button class="btn primary" data-action="save-transfer-labels">Save labels</button>
       </div>
     </div>
   </section>
@@ -238,39 +241,39 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Global sync</h2>
       <p class="hint">Master switch. While paused nothing is written and Plaid is not asked to refresh. Dry runs still work.</p>
-      <div class="actions"><span id="globalState" class="chip">…</span><button id="globalBtn" class="btn warning" onclick="toggleGlobal()">…</button></div>
+      <div class="actions"><span id="globalState" class="chip">…</span><button id="globalBtn" class="btn warning" data-action="toggle-global">…</button></div>
     </div>
     <div class="block">
       <h2>Admin token</h2>
       <p class="hint">Stored only in this browser.</p>
-      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" onclick="saveToken()">Save</button><button class="btn ghost" onclick="clearToken()">Clear</button></div></div>
+      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" class="no-margin"><button class="btn primary" data-action="save-token">Save</button><button class="btn ghost" data-action="clear-token">Clear</button></div></div>
     </div>
     <div class="block">
       <h2>Bank connections</h2>
       <p class="hint">Checked about every 6 hours. "Needs reauth" means the bank must be reconnected before its data goes stale.</p>
       <div id="items" class="list"></div>
-      <div class="actions"><button class="btn" onclick="loadItems(true)">Check now</button><a class="btn" href="/setup" target="_blank" rel="noopener">Reconnect or add a bank ↗</a></div>
+      <div class="actions"><button class="btn" data-action="check-items">Check now</button><a class="btn" href="/setup" target="_blank" rel="noopener">Reconnect or add a bank ↗</a></div>
     </div>
     <div class="block">
       <h2>Accounts</h2>
       <p class="hint">Turn syncing on or off, set how often each account syncs, and edit IDs. New banks are added from the setup page. Leave the token blank to keep the current one.</p>
       <div id="accounts" class="list"></div>
-      <div class="actions"><button class="btn primary" onclick="saveAccounts()">Save accounts</button></div>
+      <div class="actions"><button class="btn primary" data-action="save-accounts">Save accounts</button></div>
     </div>
   </section>
 
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
-      <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" onclick="undo(this)">Undo…</button></div>
-      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" onclick="show('/force-refresh', this)">Refresh Plaid</button></div>
-      <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/plaid/raw?account=' + a + '&days=30&count=100'); })">Show</button></div>
-      <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" onclick="tracePending(this)">Explain</button></div>
+      <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" data-action="undo">Undo…</button></div>
+      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" data-action="show-path" data-path="/force-refresh">Refresh Plaid</button></div>
+      <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" data-action="show-account-path" data-path="/debug/plaid/raw?account={account}&days=30&count=100">Show</button></div>
+      <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" data-action="trace-pending">Explain</button></div>
       <div id="traceOut"></div>
-      <div class="recovery"><div><strong>Stuck pending rows (saved automatically)</strong><p>Every hourly health check saves the reason whenever a pending row should have moved to posted but didn't, including rows you've since fixed by hand. Kept 30 days after they're resolved.</p></div><button class="btn" onclick="loadStuck(this)">Refresh</button></div>
+      <div class="recovery"><div><strong>Stuck pending rows (saved automatically)</strong><p>Every hourly health check saves the reason whenever a pending row should have moved to posted but didn't, including rows you've since fixed by hand. Kept 30 days after they're resolved.</p></div><button class="btn" data-action="load-stuck">Refresh</button></div>
       <div id="stuckOut"></div>
-      <div class="recovery"><div><strong>What YNAB has</strong><p>The YNAB register for the selected account (30 days), with worker ownership flags.</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/ynab-register?account=' + a + '&days=30'); })">Show</button></div>
-      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" onclick="show('/configure-webhooks', this)">Configure</button></div>
-      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" onclick="show('/test-alert', this)">Send test</button></div>
+      <div class="recovery"><div><strong>What YNAB has</strong><p>The YNAB register for the selected account (30 days), with worker ownership flags.</p></div><button class="btn" data-action="show-account-path" data-path="/debug/ynab-register?account={account}&days=30">Show</button></div>
+      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" data-action="show-path" data-path="/configure-webhooks">Configure</button></div>
+      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" data-action="show-path" data-path="/test-alert">Send test</button></div>
       <div class="recovery"><div><strong>Live logs</strong><p>From your PC: <code>npx wrangler tail</code> in the project folder.</p></div></div>
     </div>
     <div class="block">
@@ -649,8 +652,8 @@ async function loadStuck(btn) {
     try {
       var d = await api("/debug/stuck-pending", undefined, btn ? undefined : false);
       var list = d.entries || [];
-      if (!list.length) { $("stuckOut").innerHTML = '<p class="small" style="margin:6px 0 12px">No stuck pending rows recorded.</p>'; return; }
-      $("stuckOut").innerHTML = '<div class="card scroll" style="margin:8px 0 14px"><table class="table"><tr><th>Account</th><th>Row</th><th class="num">Amount</th><th>What Plaid said</th><th>Status</th></tr>' +
+      if (!list.length) { $("stuckOut").innerHTML = '<p class="small" class="m-6-0-12">No stuck pending rows recorded.</p>'; return; }
+      $("stuckOut").innerHTML = '<div class="card scroll" class="m-8-0-14"><table class="table"><tr><th>Account</th><th>Row</th><th class="num">Amount</th><th>What Plaid said</th><th>Status</th></tr>' +
         list.map(function (e) {
           var plaid = e.plaid_posted_linked ? "Posted version, linked: " + e.plaid_posted_linked.name + " " + money(e.plaid_posted_linked.amount) + " on " + e.plaid_posted_linked.date
             : (e.unlinked_posted_lookalikes || []).length ? "Posted look-alikes (not linked): " + e.unlinked_posted_lookalikes.map(function (c) { return c.name + " " + money(c.amount) + " on " + c.date; }).join("; ")
@@ -667,12 +670,12 @@ async function tracePending(btn) {
   await busy(btn, async function () {
     try {
       var d = await api("/debug/pending-trace?account=" + encodeURIComponent(a));
-      var head = '<p class="small" style="padding:10px 14px 0;margin:0"><strong>' + esc(pretty(a)) + ':</strong> Plaid currently lists <strong>' + d.plaid_pending_count + '</strong> pending charge(s); YNAB has <strong>' + d.ynab_uncleared_worker_rows + '</strong> pending row(s) from the worker. Plaid last got data from the bank: ' + esc(d.plaid_last_bank_update ? when(d.plaid_last_bank_update) + " (" + ago(d.plaid_last_bank_update) + ")" : "unknown") + (d.window_truncated ? " · bank data truncated" : "") + "</p>";
+      var head = '<p class="small" class="p-10-14-0 no-margin"><strong>' + esc(pretty(a)) + ':</strong> Plaid currently lists <strong>' + d.plaid_pending_count + '</strong> pending charge(s); YNAB has <strong>' + d.ynab_uncleared_worker_rows + '</strong> pending row(s) from the worker. Plaid last got data from the bank: ' + esc(d.plaid_last_bank_update ? when(d.plaid_last_bank_update) + " (" + ago(d.plaid_last_bank_update) + ")" : "unknown") + (d.window_truncated ? " · bank data truncated" : "") + "</p>";
       var rows = (d.rows || []).map(function (r) {
         var looks = (r.unlinked_posted_lookalikes || []).map(function (c) { return c.name + " " + money(c.amount) + " on " + c.date; }).join("; ");
         return "<tr><td>" + esc(r.date) + "</td><td>" + esc(r.payee) + '</td><td class="num">' + money(r.amount) + "</td><td>" + esc(r.verdict) + (looks ? '<br><span class="small">Posted look-alikes: ' + esc(looks) + "</span>" : "") + "</td></tr>";
       }).join("");
-      $("traceOut").innerHTML = '<div class="card scroll" style="margin:8px 0 14px">' + head + (rows ? '<table class="table"><tr><th>Date</th><th>Payee</th><th class="num">Amount</th><th>What Plaid says about it</th></tr>' + rows + "</table>" : '<p class="small" style="padding:0 14px 10px">No pending rows from the worker.</p>') + "</div>";
+      $("traceOut").innerHTML = '<div class="card scroll" class="m-8-0-14">' + head + (rows ? '<table class="table"><tr><th>Date</th><th>Payee</th><th class="num">Amount</th><th>What Plaid says about it</th></tr>' + rows + "</table>" : '<p class="small" class="p-0-14-10">No pending rows from the worker.</p>') + "</div>";
     } catch (e) { flash([e.message], "bad"); }
   });
 }
@@ -773,7 +776,7 @@ function renderRules() {
       '<div><span class="field-label">Bank text contains</span><input aria-label="Bank text contains" data-r="' + i + '" data-f="contains" value="' + esc(r.contains) + '" /></div>' +
       '<div><span class="field-label">Only these amounts (optional)</span><input aria-label="Only these amounts (optional)" data-r="' + i + '" data-f="amounts" value="' + esc((r.amounts || []).join(", ")) + '" placeholder="Any amount" /></div>' +
       '<div class="full"><span class="field-label">Why</span><input aria-label="Why" data-r="' + i + '" data-f="reason" value="' + esc(r.reason) + '" /></div>' +
-      '</div><div class="actions"><button class="btn ghost" onclick="deleteRule(' + i + ')">Delete rule</button></div></div>';
+      '</div><div class="actions"><button class="btn ghost" data-action="delete-rule" data-index="' + i + '">Delete rule</button></div></div>';
   }).join("") : '<div class="empty">No rules. The worker imports everything.</div>';
   $("rules").querySelectorAll("[data-r]").forEach(function (el) {
     el.addEventListener("input", function () {
@@ -809,7 +812,7 @@ function renderAliases() {
   $("aliases").innerHTML = state.aliases.length ? state.aliases.map(function (g, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Merchant</span><input aria-label="Merchant" data-a="' + i + '" data-f="canonical" value="' + esc(g.canonical) + '" /></div>' +
       '<div><span class="field-label">Names that mean it (comma-separated)</span><input aria-label="Names that mean it (comma-separated)" data-a="' + i + '" data-f="patterns" value="' + esc((g.patterns || []).join(", ")) + '" /></div></div>' +
-      '<div class="actions"><button class="btn ghost" onclick="deleteAlias(' + i + ')">Remove group</button></div></div>';
+      '<div class="actions"><button class="btn ghost" data-action="delete-alias" data-index="' + i + '">Remove group</button></div></div>';
   }).join("") : '<div class="empty">No aliases.</div>';
   $("aliases").querySelectorAll("[data-a]").forEach(function (el) {
     el.addEventListener("input", function () {
@@ -838,7 +841,7 @@ function renderTLabels() {
   $("tlabels").innerHTML = state.tlabels.length ? state.tlabels.map(function (l, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Last digits</span><input aria-label="Last digits" inputmode="numeric" data-t="' + i + '" data-f="tail" value="' + esc(l.tail) + '" /></div>' +
       '<div><span class="field-label">Payee name</span><input aria-label="Payee name" data-t="' + i + '" data-f="label" value="' + esc(l.label) + '" /></div></div>' +
-      '<div class="actions"><button class="btn ghost" onclick="deleteTLabel(' + i + ')">Remove</button></div></div>';
+      '<div class="actions"><button class="btn ghost" data-action="delete-transfer-label" data-index="' + i + '">Remove</button></div></div>';
   }).join("") : '<div class="empty">No labels.</div>';
   $("tlabels").querySelectorAll("[data-t]").forEach(function (el) {
     el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; });
@@ -944,6 +947,41 @@ async function saveAccounts() {
   } catch (e) { attention([e.message], "bad"); }
 }
 
+
+document.addEventListener("click", function (event) {
+  var target = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+  if (!target) return;
+  var action = target.getAttribute("data-action");
+  var index = Number(target.getAttribute("data-index"));
+  switch (action) {
+    case "run-sync": runSync(target); break;
+    case "recheck": recheck(target); break;
+    case "rescan": rescan(target); break;
+    case "run-reconcile": runReconcile(target); break;
+    case "add-rule": addRule(); break;
+    case "save-rules": saveRules(); break;
+    case "add-alias": addAlias(); break;
+    case "save-aliases": saveAliases(); break;
+    case "add-transfer-label": addTLabel(); break;
+    case "save-transfer-labels": saveTLabels(); break;
+    case "toggle-global": toggleGlobal(); break;
+    case "save-token": saveToken(); break;
+    case "clear-token": clearToken(); break;
+    case "check-items": loadItems(true); break;
+    case "save-accounts": saveAccounts(); break;
+    case "undo": undo(target); break;
+    case "show-path": show(target.getAttribute("data-path"), target); break;
+    case "show-account-path":
+      needAccount(function (account) { show(target.getAttribute("data-path").replace("{account}", account), target); });
+      break;
+    case "trace-pending": tracePending(target); break;
+    case "load-stuck": loadStuck(target); break;
+    case "delete-rule": deleteRule(index); break;
+    case "delete-alias": deleteAlias(index); break;
+    case "delete-transfer-label": deleteTLabel(index); break;
+  }
+});
+
 // ---------- Start ----------
 (async function init() {
   // Remove credentials saved by older releases; this build uses HttpOnly cookies.
@@ -979,7 +1017,7 @@ async function saveAccounts() {
   return new Response(securedHtml, {
     headers: {
       "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
-      "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "'; script-src-attr 'unsafe-inline'; style-src 'self' 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; font-src 'self' data:"
+      "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "'; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-attr 'none'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; font-src 'self' data:"
     }
   });
 }
