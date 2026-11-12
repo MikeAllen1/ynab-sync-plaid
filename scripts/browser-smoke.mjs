@@ -7,7 +7,8 @@ const port = 8791;
 const origin = "http://127.0.0.1:" + port;
 const child = spawn("npx", ["wrangler", "dev", "--local", "--port", String(port)], {
   stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, NO_COLOR: "1" }
+  env: { ...process.env, NO_COLOR: "1" },
+  detached: process.platform !== "win32"
 });
 let serverOutput = "";
 child.stdout.on("data", chunk => { serverOutput += chunk.toString(); });
@@ -73,5 +74,16 @@ try {
   console.log("PASS  Plaid setup script is nonce-authorized and its action handler runs");
 } finally {
   if (browser) await browser.close();
-  child.kill("SIGTERM");
+  const closed = new Promise(resolve => child.once("close", resolve));
+  try {
+    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM");
+    else child.kill("SIGTERM");
+  } catch {}
+  await Promise.race([closed, delay(2000)]);
+  if (child.exitCode === null && child.signalCode === null) {
+    try {
+      if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {}
+  }
 }
