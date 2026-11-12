@@ -906,7 +906,7 @@ async function loadAccounts() {
     $("accounts").innerHTML = state.acctRows.map(function (r, i) {
       var st = state.settings.find(function (x) { return x.nickname === r.nickname; }) || {};
       var freq = [15, 30, 60, 120, 240].map(function (m) { return '<option value="' + m + '"' + (st.sync_frequency_minutes === m ? " selected" : "") + ">Every " + (m < 60 ? m + " min" : (m / 60) + " hr") + "</option>"; }).join("");
-      return '<div class="card item" data-acct="' + i + '"><h3>' + esc(pretty(r.nickname)) + ' <span class="small">' + esc(r.institution || "") + (r.has_token ? " · token " + esc(r.token_preview) : " · no token") + "</span></h3><div class='grid2'>" +
+      return '<div class="card item" data-acct="' + i + '"><h3>' + esc(pretty(r.nickname)) + ' <span class="small">' + esc(r.institution || "") + (r.has_token ? " · connected" : " · no token") + "</span></h3><div class='grid2'>" +
         '<div><label class="inline"><input type="checkbox" data-f="sync_enabled"' + (st.sync_enabled !== false ? " checked" : "") + ' /> Sync: the worker writes to this account</label></div>' +
         '<div><span class="field-label">Frequency</span><select aria-label="Frequency" data-f="sync_frequency_minutes">' + freq + "</select></div>" +
         (r.is_credit_card
