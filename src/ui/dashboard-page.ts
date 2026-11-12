@@ -56,7 +56,8 @@ export function dashboardHtml(): Response {
     .attention.ok { border-left-color: var(--ok-dot); background: var(--ok-bg); color: var(--ok); }
     .attention ul { margin: 0; padding-left: 18px; }
     .rows { overflow: hidden; margin-bottom: 20px; }
-    .row { display: grid; grid-template-columns: 1.3fr auto 1fr 1fr 1fr; gap: 14px; align-items: center; padding: 14px 22px; }
+    .row { display: grid; grid-template-columns: minmax(150px, 1.2fr) 160px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; padding: 14px 22px; }
+    .row > .chip { justify-self: start; }
     .row + .row { border-top: 1px solid var(--border); }
     .row-name { font-weight: 700; font-size: 15px; }
     .metric { font-size: 12px; color: var(--muted); }
@@ -469,7 +470,7 @@ function renderOverview(h) {
   $("kpiHealthyNote").textContent = tracked ? "includes accounts that are only health-checked" : "";
   $("kpiDiff").textContent = haveDiff ? money(diff) : "—";
   var diffNotes = [];
-  if (explained > 0.01) diffNotes.push("plus " + money(explained) + " explained by named transactions");
+  if (explained > 0.01) diffNotes.push("plus " + money(explained) + " in known differences (listed under each account; they clear on their own)");
   if (state.auditTs) diffNotes.push("as of " + ago(state.auditTs));
   $("kpiDiffNote").textContent = diffNotes.join("; ");
   $("kpiDiff").className = "kpi-value" + (haveDiff && diff > 25 ? " bad" : haveDiff && diff > 0.01 ? " warn" : "");
@@ -562,6 +563,11 @@ function renderPreview(data) {
 // ---------- Actions ----------
 function acctQuery(prefix) { return selected() ? prefix + "account=" + encodeURIComponent(selected()) : ""; }
 
+// How fresh the bank data behind a sync was, from the last connection check.
+function feedAge(nickname) {
+  var it = state.items && state.items[nickname];
+  return it && it.last_bank_update ? " (bank data from " + ago(it.last_bank_update) + ")" : "";
+}
 // What a sync actually did, per account, from its response.
 function summarizeRun(d, label) {
   if (!d) return { items: [label + ": no response."], level: "bad" };
@@ -574,7 +580,7 @@ function summarizeRun(d, label) {
     if (r.status === "error" || r.status === "bootstrap_failed") { level = "bad"; items.push(name + ": failed. " + (r.friendly_error || r.error)); return; }
     if (/^skipped/.test(r.status || "")) { items.push(name + ": " + String(r.status).replace(/^skipped - /, "skipped (") + (/^skipped - /.test(r.status) ? ")" : "")); return; }
     var c = r.created_count || 0, u = r.updated_count || 0, x = r.deleted_count || 0;
-    var line = name + ": " + (c + u + x ? [c ? c + " added" : "", u ? u + " updated" : "", x ? x + " removed" : ""].filter(Boolean).join(", ") : "no changes needed");
+    var line = name + ": " + (c + u + x ? [c ? c + " added" : "", u ? u + " updated" : "", x ? x + " removed" : ""].filter(Boolean).join(", ") : "already matches the bank feed" + feedAge(r.account));
     if (r.status === "partial") { level = level === "bad" ? "bad" : "warn"; line += ". " + (r.partial_note || "Some changes didn't go through; see Activity."); }
     if (r.status === "paused - nothing written") { level = level === "bad" ? "bad" : "warn"; line = name + ": paused before writing; nothing changed."; }
     items.push(line);
