@@ -28,6 +28,15 @@ export interface Env {
   // Optional. "off" stops asking Plaid to re-check banks (/transactions/refresh), which
   // paid Plaid plans bill per call. Default: on.
   PLAID_REFRESH?: string;
+  // Optional. The worker's public origin (https://ynab-sync.<you>.workers.dev), used for
+  // links in alert emails and the webhook URL given to Plaid.
+  WORKER_ORIGIN?: string;
+  // Optional. Overrides the Plaid Link OAuth redirect (default: <origin>/setup).
+  PLAID_REDIRECT_URI?: string;
+  // Optional email alerts through Resend (https://resend.com).
+  RESEND_API_KEY?: string;
+  ALERT_EMAIL_TO?: string;
+  ALERT_EMAIL_FROM?: string;
 }
 
 export interface AccountConfig {
