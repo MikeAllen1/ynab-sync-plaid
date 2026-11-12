@@ -49,13 +49,25 @@ async function live(path, options = {}) {
 
 try {
   const scriptPath = "/accounts/" + accountId + "/workers/scripts/" + encodeURIComponent(workerName);
-  const [settings, secrets, namespaces, kvNamespaces, deployments] = await Promise.all([
+  const [settings, secrets, namespaces, kvNamespaces, deployments, tokenStatus] = await Promise.all([
     cf(scriptPath + "/settings"),
     cf(scriptPath + "/secrets"),
     cf("/accounts/" + accountId + "/workers/durable_objects/namespaces?per_page=1000"),
     cf("/accounts/" + accountId + "/storage/kv/namespaces?per_page=1000"),
-    cf(scriptPath + "/deployments")
+    cf(scriptPath + "/deployments"),
+    (async () => {
+      try { return await cf("/user/tokens/verify"); }
+      catch { return await cf("/accounts/" + accountId + "/tokens/verify"); }
+    })()
   ]);
+
+  if (tokenStatus.status === "active") pass("Cloudflare verification token is active");
+  else fail("Cloudflare verification token is not active");
+
+  const vars = settings.vars || {};
+  const plaidEnv = Array.isArray(vars) ? vars.find(v => v.name === "PLAID_ENV")?.value : vars.PLAID_ENV;
+  if (plaidEnv === "production") pass("Worker PLAID_ENV is production");
+  else fail("Worker PLAID_ENV is not set to production");
 
   const bindings = settings.bindings || [];
   const kv = bindings.find(b => b.name === "SYNC_STATE" && b.type === "kv_namespace");
@@ -76,7 +88,8 @@ try {
     else fail("Required secret binding is missing: " + name);
   }
 
-  if (Array.isArray(deployments) && deployments.length > 0) pass("Cloudflare reports at least one deployed Worker version");
+  const deployedVersions = Array.isArray(deployments) ? deployments : deployments?.deployments;
+  if (Array.isArray(deployedVersions) && deployedVersions.length > 0) pass("Cloudflare reports at least one deployed Worker version");
   else fail("No Worker deployment version was returned");
 
   const dashboard = await live("/dashboard");
@@ -104,7 +117,8 @@ try {
       readinessBody.bindings?.SYNC_STATE === true &&
       readinessBody.bindings?.SYNC_LOCK === true &&
       readinessBody.durable_object?.class === "SyncLock" &&
-      readinessBody.durable_object?.storage === "available") {
+      readinessBody.durable_object?.storage === "available" &&
+      readinessBody.kv_readable === true) {
     pass("Live Worker can read KV and execute a transactional SyncLock storage probe");
   } else fail("Live Worker storage readiness failed (HTTP " + readiness.status + ")");
 
