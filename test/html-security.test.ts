@@ -27,11 +27,12 @@ function inlineScripts(html: string): string {
   const out: string[] = [];
   let at = 0;
   for (;;) {
-    const open = html.indexOf("<script>", at);
+    const open = html.indexOf("<script nonce=", at);
     if (open < 0) break;
-    const close = html.indexOf("</script>", open);
-    if (close < 0) break;
-    out.push(html.slice(open + "<script>".length, close));
+    const tagEnd = html.indexOf(">", open);
+    const close = html.indexOf("</script>", tagEnd);
+    if (tagEnd < 0 || close < 0) break;
+    if (!/\ssrc=/.test(html.slice(open, tagEnd))) out.push(html.slice(tagEnd + 1, close));
     at = close;
   }
   return out.join("\n");
@@ -54,5 +55,17 @@ test("dashboard and setup page scripts define the escaping helpers they call", a
     const hostile = "<" + "img src=x onerror=" + '"alert(1)">' + " & 'q'";
     assert.equal(ctx.esc(hostile), escapeHtml(hostile), `${name}: page esc differs from escapeHtml`);
     if (ctx.safeCssClass) assert.equal(ctx.safeCssClass("ok onload=x", ["ok"]), "");
+  }
+});
+
+test("admin pages run under a nonce CSP with no inline event handlers", async () => {
+  const response = dashboardHtml("test-nonce-1");
+  const csp = response.headers.get("Content-Security-Policy") || "";
+  assert.match(csp, /script-src 'nonce-test-nonce-1'(;|$)/, "dashboard allows only its own nonce");
+  assert.doesNotMatch(csp, /unsafe-inline[^;]*;?\s*$|script-src[^;]*unsafe/, "no unsafe script sources");
+  const pages = { dashboard: await response.text(), setup: setupHtml("test-nonce-2") };
+  for (const [name, html] of Object.entries(pages)) {
+    assert.doesNotMatch(html, /\son[a-z]+\s*=\s*["']/i, `${name}: inline event handler attribute found`);
+    for (const tag of html.match(/<script\b[^>]*>/g) || []) assert.match(tag, /nonce="test-nonce-[12]"/, `${name}: script without nonce: ${tag}`);
   }
 });

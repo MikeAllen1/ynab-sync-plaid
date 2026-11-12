@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, constantTimeEqual, createAdminSessionValue, json, newCspNonce, pageSecurityHeaders, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -627,7 +627,8 @@ export const workerEntry = {
     // reconnect calls below carry the admin token the user pastes in. Handles the
     // OAuth redirect that Chase requires.
     if (url.pathname === "/setup") {
-      return new Response(setupHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", ...NO_FRAMING } });
+      const nonce = newCspNonce();
+      return new Response(setupHtml(nonce), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...pageSecurityHeaders(nonce, "setup") } });
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
     // update accounts without editing wrangler.toml or redeploying.

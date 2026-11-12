@@ -85,6 +85,35 @@ export const NO_FRAMING = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
 };
 
+// A fresh random nonce per page load, for the page's own <script> tags.
+export function newCspNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+// Headers for the admin HTML pages. script-src allows only this response's nonce (and,
+// on /setup, Plaid Link's loader), so even if a bank-supplied payee name ever slipped
+// past escaping, injected markup could not run script. Inline event handlers are not
+// used anywhere for the same reason. Styles stay inline-friendly: they can't run code.
+export function pageSecurityHeaders(nonce: string, page: "dashboard" | "setup" = "dashboard"): Record<string, string> {
+  const plaid = page === "setup";
+  const csp = [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'${plaid ? " https://cdn.plaid.com/link/v2/stable/link-initialize.js" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    `connect-src 'self'${plaid ? " https://*.plaid.com" : ""}`,
+    ...(plaid ? ["frame-src https://cdn.plaid.com"] : []),
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'"
+  ].join("; ");
+  return { ...NO_FRAMING, "Content-Security-Policy": csp };
+}
+
 // ---------- Security / utilities ----------
 
 export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
