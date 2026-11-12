@@ -48,7 +48,7 @@ test("Plaid transaction history rejects a changing total across pages", async ()
   globalThis.fetch = async () => {
     calls++;
     return Response.json({
-      transactions: [{ transaction_id: "tx-" + calls, account_id: "plaid-account", date: "2026-11-11", amount: 12 }],
+      transactions: [{ transaction_id: "tx-" + calls, account_id: "plaid-account", date: "2026-11-11", amount: 12, pending: false }],
       total_transactions: calls === 1 ? 2 : 3
     });
   };
@@ -60,7 +60,7 @@ test("Plaid transaction history rejects a changing total across pages", async ()
 test("Plaid transaction history rejects duplicate records across pages", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({
-    transactions: [{ transaction_id: "same-tx", account_id: "plaid-account", date: "2026-11-11", amount: 12 }],
+    transactions: [{ transaction_id: "same-tx", account_id: "plaid-account", date: "2026-11-11", amount: 12, pending: false }],
     total_transactions: 2
   });
   try {
