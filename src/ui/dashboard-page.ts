@@ -500,7 +500,8 @@ var EVENT_LABELS = {
   pending_flip_linked: "Pending posted", pending_twin_flip_checking: "Pending posted", duplicate_remove: "Duplicate removed",
   update_failed: "Needs you: update failed", delete_failed: "Needs you: removal failed",
   import_gave_up: "Needs you: not imported", marked_cleared: "Your entry cleared (posted at bank)", too_old_to_import: "Needs you: too old to import", transaction_quarantined: "Needs you: unreadable bank item", stuck_pending: "Needs you: pending row stuck", cursor_rebuilt: "Bank history replayed",
-  matched_existing_row: "Already in YNAB (linked to your row)"
+  matched_existing_row: "Already in YNAB (linked to your row)",
+  matched_by_amount_only: "Check: linked to your row by amount only"
 };
 var NEEDS_YOU = { update_failed: 1, delete_failed: 1, import_gave_up: 1, too_old_to_import: 1, stuck_pending: 1, transaction_quarantined: 1 };
 async function loadEvents() {

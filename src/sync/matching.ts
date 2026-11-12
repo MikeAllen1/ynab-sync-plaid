@@ -163,6 +163,17 @@ export function bankBalanceLag(diff: number, plaid: PlaidTransaction[], today: s
   return null;
 }
 
+// Does this name carry a word the conflict check can compare (4+ letters)? "Gas",
+// "QT 123" or an empty payee don't, so they can neither confirm nor rule out a match.
+export function hasComparableName(x: string, aliases: PayeeAlias[]): boolean {
+  return applyPayeeAlias(x, aliases).split(" ").some(w => /^[A-Z]{4,}$/.test(w));
+}
+
+// Amount-only pairings whose names say nothing either way must be this close in date.
+// Wider than this, a same-amount purchase days apart ("Gas $40" Monday, "SHELL OIL
+// $40" Thursday) is as likely a different purchase as the same one.
+export const AMOUNT_ONLY_UNNAMED_DATE_DAYS = 1;
+
 export function namesConflict(a: string, b: string, aliases: PayeeAlias[]): boolean {
   const words = (x: string) => new Set(applyPayeeAlias(x, aliases).split(" ").filter(w => /^[A-Z]{4,}$/.test(w)));
   const wa = words(a), wb = words(b);

@@ -8,7 +8,7 @@ import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
 import { logEvent } from "../store/event-log";
-import { ALREADY_IN_YNAB_DATE_DAYS, CARD_PAYMENT_POSTING_DAYS, WORKER_PENDING_PREFIX, cleanName, daysApart, getCcEpoch, leadingWordMatch, namesConflict, namesSimilar, nextOccurrence, normalizeMerchant, plaidPayeeText, prunePostedMap, seedOccurrenceCounts, shortStableHash, ynabImportId } from "./matching";
+import { ALREADY_IN_YNAB_DATE_DAYS, AMOUNT_ONLY_UNNAMED_DATE_DAYS, CARD_PAYMENT_POSTING_DAYS, WORKER_PENDING_PREFIX, cleanName, daysApart, getCcEpoch, hasComparableName, leadingWordMatch, namesConflict, namesSimilar, nextOccurrence, normalizeMerchant, plaidPayeeText, prunePostedMap, seedOccurrenceCounts, shortStableHash, ynabImportId } from "./matching";
 import { accountRefsIn, classifyTransfer, resolveCardForPayment, transferPayeeName, untrackedCardPayee } from "./transfers";
 import { appendUndo, getUndoLog } from "./undo";
 import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, QuarantinedPlaidTxn, partitionPlaidTxns } from "../types";
@@ -420,7 +420,14 @@ export function uniqueAmountPairs<T extends { t: PlaidTransaction; inSide?: bool
     // A Direct Import row's id records the bank's own amount and date for the charge
     // ("YNAB:-61470:2026-10-06:1"). When those agree with this charge and it is the
     // only candidate both ways, it IS this charge, whatever you renamed it to in YNAB.
-    if (!isPayment && !r.transfer_transaction_id && !handEnteredSameDay && !directImportIdAgrees(r, item.t, isDirectImport) && namesConflict(plaidPayeeText(item.t), normalizeMerchant(r.payee_name || ""), aliases)) continue;
+    const diAgrees = directImportIdAgrees(r, item.t, isDirectImport);
+    if (!isPayment && !r.transfer_transaction_id && !handEnteredSameDay && !diAgrees && namesConflict(plaidPayeeText(item.t), normalizeMerchant(r.payee_name || ""), aliases)) continue;
+    // Names that can't be compared (no 4+ letter word on one side) are no evidence at
+    // all, so the pairing rests on amount and date alone. Only accept it when the
+    // dates are close; otherwise leave the charge to be imported.
+    if (!isPayment && !r.transfer_transaction_id && !diAgrees &&
+        (!hasComparableName(plaidPayeeText(item.t), aliases) || !hasComparableName(normalizeMerchant(r.payee_name || ""), aliases)) &&
+        daysApart(item.t.date, r.date) > AMOUNT_ONLY_UNNAMED_DATE_DAYS) continue;
     const rivals = leftovers.filter(o => o !== item && near(o.t, r) && paymentLike(o) === isPayment);
     if (rivals.length > 0) continue;
     pairs.push([item, r]);
@@ -1032,7 +1039,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   for (const [it, r] of uniqueAmountPairs(items.filter(i => !i.row && !!i.spec.row && !i.spec.row.payee_id), snapshot, (r, i) => contentEligible(i.t)(r), ctx.aliases, isDirectImportRow)) {
     if (claimed.has(r.id)) continue;
     claim(it, r, "content_amount"); newLinks[it.L] = r.id;
-    matchedExisting.push({ it, row: r, how: "same amount" });
+    matchedExisting.push({ it, row: r, how: "same amount only" });
   }
 
   // P4 duplicate race: a worker row plus an unowned non-worker row for the same
@@ -1533,7 +1540,8 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   }
   for (const m of matchedExisting) {
     logEvent(events, {
-      account: acct.nickname, action: "matched_existing_row", transaction_id: m.it.t.transaction_id, amount: Math.round(-m.it.t.amount * 1000),
+      // Linked on amount and date alone: listed separately so it's easy to check.
+      account: acct.nickname, action: m.how === "same amount only" ? "matched_by_amount_only" : "matched_existing_row", transaction_id: m.it.t.transaction_id, amount: Math.round(-m.it.t.amount * 1000),
       detail: `${safePayee(m.it.t)} ${m.it.t.date}${m.it.t.pending ? " (pending)" : ""}: already in YNAB as your row "${m.row.payee_name || ""}" dated ${m.row.date} (${m.how}), so no new row. If that row is a different payment, add this one by hand.`
     });
   }
