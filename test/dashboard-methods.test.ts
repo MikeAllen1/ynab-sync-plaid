@@ -15,6 +15,9 @@ test("dashboard buttons use POST for every POST-only route", () => {
   for (const m of page.matchAll(/show\('([^'?]+)[^']*'[^)]*\)/g)) {
     if (postOnly.has(m[1]) && !/'POST'\)$/.test(m[0])) problems.push(m[0]);
   }
+  for (const m of page.matchAll(/data-click="show" data-path="([^"?]+)[^"]*"(?: data-method="([A-Z]+)")?/g)) {
+    if (postOnly.has(m[1]) && m[2] !== "POST") problems.push(m[0]);
+  }
   for (const m of page.matchAll(/api\("([^"?]+)[^"]*"([^;]*)/g)) {
     if (postOnly.has(m[1]) && !/method:\s*"POST"/.test(m[2])) problems.push(m[0].slice(0, 80));
   }

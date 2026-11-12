@@ -1,15 +1,16 @@
 import { escapeHtml as esc } from "../util/html";
+import { newCspNonce } from "../util/http";
 
 // ---------- Dashboard ----------
 
-export function setupHtml(): string {
+export function setupHtml(nonce: string = newCspNonce()): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bank connections · YNAB Sync</title>
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script nonce="${nonce}" src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <style>
     :root { --bg:#f7f8fb; --surface:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb; --control-border:#7b8494; --primary:#2563eb; --link:#1d4ed8; --ok-bg:#ecfdf5; --ok:#065f46; --bad-bg:#fef2f2; --bad:#991b1b; }
     @media (prefers-color-scheme: dark) { :root { --bg:#0b1020; --surface:#121a2b; --text:#e5e9f2; --muted:#93a0b8; --border:#243049; --control-border:#6b7a96; --primary:#2563eb; --link:#9dc0ff; --ok-bg:#0f2a1c; --ok:#7ee2a8; --bad-bg:#2e1215; --bad:#ffa3a3; } }
@@ -44,11 +45,11 @@ export function setupHtml(): string {
 
   <h2>Add a bank</h2>
   <p class="muted">Link the bank, then choose which of its accounts to sync and the YNAB account each one feeds. Before the first sync, set the YNAB account's starting balance to the bank's posted balance.</p>
-  <button id="addBtn" onclick="addBank()">Link a new bank</button>
+  <button id="addBtn" data-click="addBank">Link a new bank</button>
   <div id="newAccounts"></div>
   <div id="status"></div>
 
-<script>
+<script nonce="${nonce}">
 // Browser-side helpers. The server-side escapeHtml/safeCssClass imports don't exist in
 // the page, so the page script needs its own copies (same behavior as src/util/html.ts).
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -139,7 +140,7 @@ function onLinked(publicToken, metadata) {
         '<div class="grid"><input data-f="nickname" placeholder="Nickname, e.g. amex" />' +
         '<select data-f="ynab"><option value="">Choose YNAB account…</option>' + options + "</select></div>" +
         '<label class="muted"><input type="checkbox" data-f="card" style="width:auto"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
-        '<button onclick="addAccount(this)">Add this account</button></div>';
+        '<button data-click="addAccount">Add this account</button></div>';
     }).join("");
     setStatus("Choose the accounts to sync. Each one starts syncing on the next run.", true);
     document.getElementById("addBtn").disabled = false;
@@ -196,6 +197,15 @@ function loadBanks() {
   }
 })();
 get("/session").then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
+
+// No inline handlers (see the page's CSP): buttons name an action from this list.
+var CLICK = { addBank: function () { addBank(); }, addAccount: function (el) { addAccount(el); } };
+document.addEventListener("click", function (ev) {
+  var el = ev.target && ev.target.closest ? ev.target.closest("[data-click]") : null;
+  if (!el || el.disabled) return;
+  var fn = CLICK[el.getAttribute("data-click")];
+  if (fn) fn(el);
+});
 </script>
 </body>
 </html>`;
