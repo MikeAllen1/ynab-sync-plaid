@@ -37,8 +37,8 @@ function makeEnv(rows: any[], batchItems: any[]) {
 
 test("undo never deletes reconciled or settled pending rows", async () => {
   const rows = [
-    { id: "posted-worker", account_id: "ynab-checking", import_id: "pl:posted", cleared: "cleared", amount: -1000, date: "2026-11-11" },
-    { id: "reconciled-worker", account_id: "ynab-checking", import_id: "pl:reconciled", cleared: "reconciled", amount: -2000, date: "2026-11-11" },
+    { id: "posted-worker", account_id: "ynab-checking", import_id: "YNAB:-1000:2026-11-11:1", cleared: "cleared", amount: -1000, date: "2026-11-11" },
+    { id: "reconciled-worker", account_id: "ynab-checking", import_id: "YNAB:-2000:2026-11-11:1", cleared: "reconciled", amount: -2000, date: "2026-11-11" },
     { id: "settled-pending", account_id: "ynab-checking", import_id: "wpend:pending", cleared: "cleared", amount: -3000, date: "2026-11-11" }
   ];
   const { env } = makeEnv(rows, rows.map(r => ({ id: r.id, account: "checking", import_id: r.import_id })));
@@ -65,8 +65,8 @@ test("undo never deletes reconciled or settled pending rows", async () => {
 
 test("undo retains only failed deletions so the operation can be retried safely", async () => {
   const rows = [
-    { id: "delete-ok", account_id: "ynab-checking", import_id: "pl:ok", cleared: "cleared", amount: -1000, date: "2026-11-11" },
-    { id: "delete-fails", account_id: "ynab-checking", import_id: "pl:fail", cleared: "cleared", amount: -2000, date: "2026-11-11" }
+    { id: "delete-ok", account_id: "ynab-checking", import_id: "YNAB:-1000:2026-11-11:1", cleared: "cleared", amount: -1000, date: "2026-11-11" },
+    { id: "delete-fails", account_id: "ynab-checking", import_id: "YNAB:-2000:2026-11-11:1", cleared: "cleared", amount: -2000, date: "2026-11-11" }
   ];
   const { env, values } = makeEnv(rows, rows.map(r => ({ id: r.id, account: "checking", import_id: r.import_id })));
   const originalFetch = globalThis.fetch;
