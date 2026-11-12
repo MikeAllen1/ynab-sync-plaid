@@ -14,7 +14,7 @@ import { appendUndo, getUndoLog } from "./undo";
 import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
-import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
+import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabGetPlanCurrency, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
 
 // ================= SYNC ENGINE (identity-first, shared by checking and cards) =================
 //
@@ -1316,6 +1316,24 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // planned, write nothing and leave the cursor where it was.
   if (!(await isSyncEnabled(env))) {
     return { status: "paused - nothing written", ...summaryBase, would_create_count: creates.length, would_update_count: updates.length, would_delete_count: deletes.length };
+  }
+
+  // YNAB stores milliunits in the plan's currency. Plaid transaction amounts
+  // are denominated in each transaction's ISO currency and this worker has no FX
+  // conversion source. Validate only rows that would be created or have their
+  // amount changed; already-matched rows that need no amount mutation are harmless.
+  const amountUpdateIds = new Set(updates.filter(u => u.amount !== undefined).map(u => u.id));
+  const currencyItems = items.filter(it =>
+    creates.some(c => createFor.get(c.import_id) === it) ||
+    (!!it.row && amountUpdateIds.has(it.row.id))
+  );
+  if (currencyItems.length > 0) {
+    const planCurrency = await ynabGetPlanCurrency(env);
+    const mismatches = currencyItems.filter(it => it.t.iso_currency_code !== planCurrency);
+    if (mismatches.length > 0) {
+      const detail = mismatches.slice(0, 5).map(it => `${it.t.transaction_id}:${it.t.iso_currency_code}`).join(", ");
+      throw new Error(`Currency mismatch: YNAB plan currency is ${planCurrency}, but Plaid returned transaction currency for ${detail}. No financial writes or cursor advance occurred; automatic FX conversion is not supported.`);
+    }
   }
 
   // Writes: creates -> updates -> deletes.
