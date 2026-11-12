@@ -12,6 +12,11 @@ a new major version means you need to do something when you update.
 - Dashboard: **Undo…** lists the recent syncs to pick from instead of asking you to type a number.
 - Dashboard: **Sync now** and **Re-scan** name the account they'll act on when one is picked in the toolbar.
 - Setup: says new accounts are added with sync off (it used to say they'd sync on the next run), marks the bank that needs reconnecting, marks YNAB accounts another bank account already feeds and asks before feeding one twice, and keeps its messages in view.
+- Dashboard: turning an account's sync on reminds you to set its YNAB balance to the bank's posted balance first, and asks on Save.
+- Dashboard: saving two accounts that feed the same YNAB account asks first (it usually imports everything twice).
+- Dashboard: Activity on a phone shows one card per event instead of a squeezed table.
+- Dashboard: the KPI tiles and tabs explain themselves (hover text, and a line under the tabs), so the glossary isn't needed.
+- Account names keep ordinary short words in normal case ("Car Loan", "Bank of the West"); acronyms like PNC, TD and USAA stay capitals.
 - Browser tests for the dashboard and setup pages, desktop and phone (`npm run test:browser`), run in CI.
 
 ## 1.0.0 — 2026-11-11

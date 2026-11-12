@@ -114,3 +114,49 @@ test("the admin token box describes the one-hour session, not browser storage", 
   await expect(page.locator("#tab-settings")).not.toContainText("Stored only in this browser");
   await expect(page.locator("#tab-settings")).toContainText("one hour");
 });
+
+test("turning an account's sync on reminds you to line up its YNAB balance, and asks on Save", async ({ page }) => {
+  page.removeAllListeners("dialog");
+  const calls = await open(page, "/dashboard");
+  await page.click('[data-tab="settings"]');
+  const ally = page.locator("[data-acct]").filter({ hasText: "Ally Savings" });
+  await expect(ally.locator(".sync-note")).toBeHidden();
+  await ally.getByLabel("Sync: the worker writes to this account").check();
+  await expect(ally.locator(".sync-note")).toBeVisible();
+  page.once("dialog", d => { expect(d.message()).toContain("Turn sync on for Ally Savings"); d.dismiss(); });
+  await page.getByRole("button", { name: "Save accounts" }).click();
+  expect(calls.some(c => c.path === "/accounts/save")).toBe(false);
+  page.once("dialog", d => d.accept());
+  await page.getByRole("button", { name: "Save accounts" }).click();
+  await expect(page.locator("#flash")).toContainText("Accounts saved");
+  expect(calls.filter(c => c.path === "/accounts/save")[0].body.settings.find((s: any) => s.nickname === "ally-savings").sync_enabled).toBe(true);
+});
+
+test("saving two accounts that feed one YNAB account asks first", async ({ page }) => {
+  page.removeAllListeners("dialog");
+  const calls = await open(page, "/dashboard");
+  await page.click('[data-tab="settings"]');
+  const amex = page.locator("[data-acct]").filter({ hasText: "Amex" });
+  await amex.locator("summary").click();
+  await amex.getByLabel("YNAB account id").fill("y-sap");
+  page.once("dialog", d => { expect(d.message()).toContain("Sapphire and Amex feed the same YNAB account"); d.dismiss(); });
+  await page.getByRole("button", { name: "Save accounts" }).click();
+  expect(calls.some(c => c.path === "/accounts/save")).toBe(false);
+});
+
+test("account names keep ordinary short words in normal case", async ({ page }) => {
+  await open(page, "/dashboard", {
+    "GET /health": { body: health({ status: { accounts: [{ nickname: "car-loan", bootstrapped: true, last_account_sync: null, next_due_minutes: 0, automation: {} }, { nickname: "pnc-checking", bootstrapped: true, last_account_sync: null, next_due_minutes: 0, automation: {} }] }, account_statuses: {} }) },
+  });
+  await expect(page.locator("#accountRows")).toContainText("Car Loan");
+  await expect(page.locator("#accountRows")).toContainText("PNC Checking");
+});
+
+test("the KPI tiles and tabs explain themselves without the outside glossary", async ({ page }) => {
+  await open(page, "/dashboard");
+  await expect(page.locator(".kpi-label", { hasText: "Unexplained difference" })).toHaveAttribute("title", /YNAB balances are from the bank/);
+  await expect(page.locator("#kpiDiffNote")).toContainText("YNAB vs the bank");
+  await expect(page.locator("#tabHint")).toContainText("What the worker changed in YNAB");
+  await page.click('[data-tab="recovery"]');
+  await expect(page.locator("#tabHint")).toContainText("Undo a sync");
+});

@@ -148,8 +148,17 @@ export async function healthReport(env: Env): Promise<any> {
   };
 }
 
+// Nicknames are lowercase-with-dashes ("bank-of-the-west"). Shown as words: short words with no
+// vowels and known acronyms in capitals (PNC, TD, USAA), small joining words lowercase. The
+// dashboard and setup pages carry the same rule in their own scripts.
+const NAME_ACRONYMS = ["usaa", "hsa", "fsa", "ira", "hysa", "heloc", "boa", "bofa"];
+const NAME_SMALL = ["of", "the", "and", "at", "for", "to", "in", "on", "a"];
 export function prettyNickname(n: string): string {
-  return String(n || "").split("-").map(w => w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return String(n || "").split("-").map((w, i) => {
+    if (/\d/.test(w) || (w.length <= 4 && !/[aeiouy]/.test(w)) || NAME_ACRONYMS.includes(w)) return w.toUpperCase();
+    if (i > 0 && NAME_SMALL.includes(w)) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
 }
 
 export interface AccountVerdict { level: "ok" | "warn" | "bad" | ""; label: string; secondary: string; tracked: boolean }

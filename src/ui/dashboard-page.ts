@@ -80,7 +80,8 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     .btn.warning { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
     .btn.danger { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-border); }
     .dirty { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--warn); }
-    .dirty[hidden] { display: none; }
+    .dirty[hidden], .sync-note[hidden] { display: none; }
+    .sync-note { display: block; margin-top: 4px; color: var(--warn); }
     .row-act { display: flex; width: max-content; margin-top: 6px; }
     .btn.small { min-height: 28px; padding: 0 10px; font-size: 12px; }
     .undo-pick { padding: 4px 0 14px; } .undo-pick label { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
@@ -120,6 +121,17 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     .recovery p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
     pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: var(--r-md); overflow: auto; max-height: 460px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     .small { font-size: 12px; color: var(--muted); }
+    .table td.ev-detail { color: var(--muted); }
+    @media (max-width: 760px) {
+      /* Activity on a phone: one card per event instead of a squeezed five-column table. */
+      .table.stack tr:first-child { display: none; }
+      .table.stack tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "what amt" "when acct" "detail detail"; gap: 2px 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+      .table.stack td { display: block; padding: 0; border: 0; }
+      .table.stack .ev-what { grid-area: what; font-weight: 650; } .table.stack .ev-amt { grid-area: amt; }
+      .table.stack .ev-when { grid-area: when; font-size: 12px; color: var(--muted); } .table.stack .ev-acct { grid-area: acct; font-size: 12px; color: var(--muted); text-align: right; }
+      .table.stack .ev-detail { grid-area: detail; font-size: 12px; overflow-wrap: anywhere; }
+      .table.stack tr.needs { background: var(--warn-bg); } .table.stack tr.needs td { background: none; }
+    }
     .money-neg { color: var(--bad); } .money-pos { color: var(--ok); }
     @media (max-width: 760px) {
       .shell { padding: 24px 16px 60px; }
@@ -141,10 +153,10 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
   </header>
 
   <div class="card kpis">
-    <div class="kpi"><div class="kpi-label">Accounts healthy</div><div id="kpiHealthy" class="kpi-value">—</div><div id="kpiHealthyNote" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Unexplained difference</div><div id="kpiDiff" class="kpi-value">—</div><div id="kpiDiffNote" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Pending purchases at bank</div><div id="kpiPending" class="kpi-value">—</div><div id="kpiPendingAsOf" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
+    <div class="kpi"><div class="kpi-label" title="Accounts whose bank connection works, whose last sync succeeded and whose YNAB balance matches the bank">Accounts healthy</div><div id="kpiHealthy" class="kpi-value">—</div><div id="kpiHealthyNote" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="How far YNAB balances are from the bank balances, after setting aside differences the worker can explain (such as a charge still pending)">Unexplained difference</div><div id="kpiDiff" class="kpi-value">—</div><div id="kpiDiffNote" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="Charges the bank lists as pending; each should be in YNAB as an uncleared row">Pending purchases at bank</div><div id="kpiPending" class="kpi-value">—</div><div id="kpiPendingAsOf" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="When the worker last finished a sync without errors">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
   </div>
 
   <div id="flash" class="flash" role="status" aria-live="polite" title="Click to dismiss" style="display:none"></div>
@@ -166,13 +178,14 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
   <p id="dryNote" class="note"></p>
 
   <nav class="tabs" role="tablist" aria-label="Sections">
-    <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-activity" data-tab="activity">Activity</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-health" data-tab="health">Account health</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-reconcile" data-tab="reconcile">Transaction reconcile</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-rules" data-tab="rules">Rules</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-settings" data-tab="settings">Settings</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-recovery" data-tab="recovery">Recovery</button>
+    <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-activity" data-tab="activity" title="What the worker changed in YNAB, newest first." data-hint="What the worker changed in YNAB, newest first.">Activity</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-health" data-tab="health" title="Bank balance vs YNAB balance for each account." data-hint="Bank balance vs YNAB balance for each account.">Account health</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-reconcile" data-tab="reconcile" title="Bank transactions matched to YNAB rows, one by one. Read-only." data-hint="Bank transactions matched to YNAB rows, one by one. Read-only.">Transaction reconcile</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-rules" data-tab="rules" title="Bank items to skip, merchant names that mean the same, and names for transfers." data-hint="Bank items to skip, merchant names that mean the same, and names for transfers.">Rules</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-settings" data-tab="settings" title="Pause, sign in, bank connections and each account's sync settings." data-hint="Pause, sign in, bank connections and each account's sync settings.">Settings</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-recovery" data-tab="recovery" title="Undo a sync, ask Plaid to refresh, and look at raw data when something's wrong." data-hint="Undo a sync, ask Plaid to refresh, and look at raw data when something's wrong.">Recovery</button>
   </nav>
+  <p id="tabHint" class="note" style="margin-top:-16px">What the worker changed in YNAB, newest first.</p>
 
   <section id="tab-activity" role="tabpanel" aria-label="activity" class="panel active">
     <div class="block" id="previewBlock" style="display:none">
@@ -302,7 +315,16 @@ window.addEventListener("beforeunload", function (ev) { if (Object.keys(dirty).s
 function $(id) { return document.getElementById(id); }
 function dry() { return $("dryRun").checked; }
 function selected() { return $("accountSelect").value; }
-function pretty(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
+function pretty(n) {
+  // Nicknames are lowercase-with-dashes ("bank-of-the-west"). Show them as words: short words with
+  // no vowels and known acronyms in capitals (PNC, TD, USAA), small joining words lowercase.
+  var ACR = ["usaa", "hsa", "fsa", "ira", "hysa", "heloc", "boa", "bofa"], SMALL = ["of", "the", "and", "at", "for", "to", "in", "on", "a"];
+  return String(n || "").split("-").map(function (w, i) {
+    if (/\\d/.test(w) || (w.length <= 4 && !/[aeiouy]/.test(w)) || ACR.indexOf(w) >= 0) return w.toUpperCase();
+    if (i > 0 && SMALL.indexOf(w) >= 0) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
+}
 function money(n) { if (n == null || isNaN(n)) return "—"; return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function milli(n) { return money(Number(n || 0) / 1000); }
 function when(iso) { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return iso || ""; } }
@@ -403,6 +425,7 @@ function setOverall(text, cls) { var el = $("overall"); el.className = "pill " +
 function openTab(name) {
   document.querySelectorAll(".tab").forEach(function (b) { var on = b.getAttribute("data-tab") === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
   document.querySelectorAll(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + name); });
+  var tb = document.querySelector('.tab[data-tab="' + name + '"]'); if (tb) $("tabHint").textContent = tb.getAttribute("data-hint") || "";
   if (name === "settings") { loadItems(false); if (!dirty.accounts) loadAccounts(); refreshGlobal(); }
   if (name === "rules") { if (!dirty.rules) loadRules(); if (!dirty.aliases) loadAliases(); if (!dirty.tlabels) loadTLabels(); }
   if (name === "recovery") loadStuck();
@@ -515,7 +538,7 @@ function renderOverview(h) {
   $("kpiHealthy").textContent = tracked ? healthy + " / " + tracked : (state.accounts.length ? "none tracked" : "—");
   $("kpiHealthyNote").textContent = tracked ? "includes accounts that are only health-checked" : "";
   $("kpiDiff").textContent = haveDiff ? money(diff) : "—";
-  var diffNotes = [];
+  var diffNotes = ["YNAB vs the bank, after differences the worker can explain"];
   if (explained > 0.01) diffNotes.push("plus " + money(explained) + " in known differences (listed under each account; they clear on their own)");
   if (state.auditTs) diffNotes.push("as of " + ago(state.auditTs));
   $("kpiDiffNote").textContent = diffNotes.join("; ");
@@ -564,11 +587,11 @@ async function loadEvents() {
       }
       return false;
     };
-    $("events").innerHTML = ev.length ? '<table class="table"><tr><th>When</th><th>Account</th><th>What</th><th class="num">Amount</th><th>Detail</th></tr>' +
+    $("events").innerHTML = ev.length ? '<table class="table stack"><tr><th>When</th><th>Account</th><th>What</th><th class="num">Amount</th><th>Detail</th></tr>' +
       ev.map(function (e, i) {
         var needs = NEEDS_YOU[e.action] && !resolved(e, i);
         var label = (EVENT_LABELS[e.action] || e.action) + (NEEDS_YOU[e.action] && !needs ? " (resolved since)" : "");
-        return "<tr" + (needs ? ' class="needs"' : "") + "><td>" + esc(when(e.ts)) + "</td><td>" + esc(pretty(e.account)) + "</td><td>" + esc(label) + '</td><td class="num">' + (e.amount != null ? milli(e.amount) : "") + "</td><td>" + esc(e.detail || "") + "</td></tr>";
+        return "<tr" + (needs ? ' class="needs"' : "") + '><td class="ev-when">' + esc(when(e.ts)) + '</td><td class="ev-acct">' + esc(pretty(e.account)) + '</td><td class="ev-what">' + esc(label) + '</td><td class="num ev-amt">' + (e.amount != null ? milli(e.amount) : "") + '</td><td class="ev-detail">' + esc(e.detail || "") + "</td></tr>";
       }).join("") + "</table>" : '<div class="empty">No activity recorded yet' + (selected() ? " for " + esc(pretty(selected())) : "") + ".</div>";
   } catch (e) { $("events").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
@@ -981,7 +1004,8 @@ async function loadAccounts() {
       var st = state.settings.find(function (x) { return x.nickname === r.nickname; }) || {};
       var freq = [15, 30, 60, 120, 240].map(function (m) { return '<option value="' + m + '"' + (st.sync_frequency_minutes === m ? " selected" : "") + ">Every " + (m < 60 ? m + " min" : (m / 60) + " hr") + "</option>"; }).join("");
       return '<div class="card item" data-acct="' + i + '"><h3>' + esc(pretty(r.nickname)) + ' <span class="small">' + esc(r.institution || "") + (r.has_token ? " · token " + esc(r.token_preview) : " · no token") + "</span></h3><div class='grid2'>" +
-        '<div><label class="inline"><input type="checkbox" data-f="sync_enabled"' + (st.sync_enabled !== false ? " checked" : "") + ' /> Sync: the worker writes to this account</label></div>' +
+        '<div><label class="inline"><input type="checkbox" data-f="sync_enabled"' + (st.sync_enabled !== false ? " checked" : "") + ' /> Sync: the worker writes to this account</label>' +
+          '<span class="small sync-note" hidden>Before the first sync, set this account&rsquo;s YNAB balance to the bank&rsquo;s posted balance (reconcile it in YNAB). The worker never imports older history, so any difference stays until you fix it.</span></div>' +
         '<div><span class="field-label">Frequency</span><select aria-label="Frequency" data-f="sync_frequency_minutes">' + freq + "</select></div>" +
         (r.is_credit_card
           ? '<div><span class="small">Cards always import from the recent window (safety net); there is no switch for it.</span></div>'
@@ -1002,6 +1026,10 @@ async function loadAccounts() {
         "</div></details></div></div>";
     }).join("") || '<div class="empty">No accounts yet. <a href="/setup">Add a bank</a>.</div>';
     setDirty("accounts", false);
+    $("accounts").querySelectorAll('[data-f="sync_enabled"]').forEach(function (cb) {
+      var was = cb.checked;
+      cb.addEventListener("change", function () { cb.closest("div").querySelector(".sync-note").hidden = was || !cb.checked; });
+    });
     $("accounts").querySelectorAll("[data-f]").forEach(function (el) { el.addEventListener("input", function () { setDirty("accounts", true); }); el.addEventListener("change", function () { setDirty("accounts", true); }); });
   } catch (e) { $("accounts").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
@@ -1016,6 +1044,13 @@ async function saveAccounts() {
     accounts.push(row);
     settings.push({ nickname: r.nickname, sync_enabled: val("sync_enabled"), backfill_enabled: val("backfill_enabled"), sync_frequency_minutes: Number(val("sync_frequency_minutes")), audit_enabled: val("audit_enabled") });
   });
+  // Two checks before writing: accounts whose sync is being turned on (their YNAB balance has
+  // to match the bank first), and one YNAB account fed by two bank accounts (imports twice).
+  var turnedOn = settings.filter(function (s) { var was = state.settings.find(function (x) { return x.nickname === s.nickname; }) || {}; return s.sync_enabled && was.sync_enabled === false; }).map(function (s) { return pretty(s.nickname); });
+  if (turnedOn.length && !confirm("Turn sync on for " + turnedOn.join(", ") + "?" + String.fromCharCode(10, 10) + "Before the first sync, set " + (turnedOn.length > 1 ? "each one's" : "its") + " YNAB balance to the bank's posted balance (reconcile it in YNAB). The worker never imports older history, so any difference stays until you fix it.")) return;
+  var byYnab = {}, shared = [];
+  accounts.forEach(function (a) { if (!a.ynab_account_id) return; if (byYnab[a.ynab_account_id]) shared.push(pretty(byYnab[a.ynab_account_id]) + " and " + pretty(a.nickname)); else byYnab[a.ynab_account_id] = a.nickname; });
+  if (shared.length && !confirm(shared.join("; ") + " feed the same YNAB account. Feeding one YNAB account from two bank accounts usually imports every transaction twice. Save anyway?")) return;
   try {
     await api("/accounts/save", { method: "POST", body: JSON.stringify({ accounts: accounts, settings: settings }) });
     setDirty("accounts", false);

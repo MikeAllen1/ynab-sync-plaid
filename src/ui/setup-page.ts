@@ -190,7 +190,16 @@ function addAccount(btn) {
   }).catch(function (e) { setStatus("Network error, the account was not added: " + e.message, false); btn.disabled = false; });
 }
 
-function prettyName(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
+function prettyName(n) {
+  // Nicknames are lowercase-with-dashes ("bank-of-the-west"). Show them as words: short words with
+  // no vowels and known acronyms in capitals (PNC, TD, USAA), small joining words lowercase.
+  var ACR = ["usaa", "hsa", "fsa", "ira", "hysa", "heloc", "boa", "bofa"], SMALL = ["of", "the", "and", "at", "for", "to", "in", "on", "a"];
+  return String(n || "").split("-").map(function (w, i) {
+    if (/\\d/.test(w) || (w.length <= 4 && !/[aeiouy]/.test(w)) || ACR.indexOf(w) >= 0) return w.toUpperCase();
+    if (i > 0 && SMALL.indexOf(w) >= 0) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
+}
 function loadBanks() {
   // Which logins need reconnecting, so the right Reconnect button is obvious.
   var needs = {};
