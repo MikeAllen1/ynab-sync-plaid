@@ -529,7 +529,7 @@ export const workerEntry = {
         }
         const result = await migratePlaidAccountIdentity(env, nickname, pending.access_token, newPlaidAccountId, pending.item_id, current.ynab_account_id);
         await env.SYNC_STATE.delete(pendingKey);
-        return { ok: true, migration: result, note: "Previous Plaid-ID state was retained. The new Plaid ID starts with a fresh cursor and bootstraps against the existing YNAB register. Run a dry run and verify the account before enabling writes." };
+        return { ok: true, migration: result, note: "Previous Plaid-ID state was retained and account writes were paused. The new Plaid ID starts with a fresh cursor and bootstraps against the existing YNAB register. Run a dry run, verify the register and balances, then explicitly re-enable sync." };
       });
     }
 
