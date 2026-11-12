@@ -119,7 +119,7 @@ export const workerEntry = {
       if (!doResponse.ok) return json({ ok: false, error: "Durable Object readiness probe failed" }, 503);
       const kvResponse = await env.SYNC_STATE.get("__security_readiness_probe");
       const doResult: any = await doResponse.json();
-      return json({ ok: doResult.ok === true, bindings: { SYNC_STATE: true, SYNC_LOCK: true }, durable_object: doResult, kv_probe: kvResponse === null ? "readable" : "readable" }, doResult.ok === true ? 200 : 503);
+      return json({ ok: doResult.ok === true, bindings: { SYNC_STATE: true, SYNC_LOCK: true }, durable_object: doResult, kv_readable: true }, doResult.ok === true ? 200 : 503);
     }
 
     if (url.pathname === "/dashboard") return dashboardHtml();
