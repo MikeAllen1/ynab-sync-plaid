@@ -280,7 +280,7 @@ export const workerEntry = {
           }))
         });
       } catch (e: any) {
-        return json({ ok: false, nickname, error: e.message }, 500);
+        return json({ ok: false, nickname, error: "Plaid account lookup failed" }, 502);
       }
     }
 
@@ -303,7 +303,6 @@ export const workerEntry = {
           nickname: a.nickname,
           institution: a.institution || "",
           plaid_account_id: a.plaid_account_id,
-          token_preview: maskToken(a.plaid_access_token),
           // Groups accounts that share one bank login, without revealing the token.
           login: a.item_id || `login-${shortStableHash(a.plaid_access_token || a.nickname)}`
         }))
@@ -679,7 +678,7 @@ export const workerEntry = {
         { method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` } }
       );
       const data: any = await readJsonBody(resp);
-      if (!resp.ok) return json({ ok: false, error: `YNAB ${resp.status}`, detail: data }, 502);
+      if (!resp.ok) return json({ ok: false, error: `YNAB request failed (${resp.status})` }, 502);
       const all: any[] = data.data?.transactions || [];
       const origin = (r: any) => !r.import_id ? "entered by hand" : String(r.import_id).startsWith("YNAB:") ? "Direct Import" : /^(pcc|pcp|wp|ynab-sync)/i.test(String(r.import_id)) ? "worker" : "other import";
       const view = (r: any) => ({ id: r.id, date: r.date, payee: r.payee_name || "", amount: roundMoney(Number(r.amount || 0) / 1000), cleared: r.cleared, import_id: r.import_id || "", origin: origin(r), is_transfer: !!r.transfer_transaction_id, memo: r.memo || "" });
