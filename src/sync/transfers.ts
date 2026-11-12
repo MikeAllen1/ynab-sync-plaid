@@ -213,10 +213,9 @@ export function resolveCardForPayment(
   if (matches.length > 1) {
     const byWords = matches.filter(a => { const r = paymentMatchFor(a)!; return paymentTextMatches(t, [], r.words); });
     if (byWords.length === 1) return byWords[0];
-    // Several cards match. Only route when the transaction contains enough
-    // evidence to identify exactly one card. Choosing the first configured card
-    // makes the outcome depend on account-map ordering and can book the transfer
-    // against the wrong liability account.
+    // Multiple matching cards without a unique word or account-reference match
+    // are ambiguous. Never route a payment to whichever account happens to appear
+    // first in configuration.
     const refs = new Set(accountRefsIn(t));
     const byRef = matches.filter(a => (paymentMatchFor(a)!.last4 || []).some(l => refs.has(l)));
     return byRef.length === 1 ? byRef[0] : null;
