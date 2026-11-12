@@ -146,8 +146,8 @@ export function dashboardHtml(): Response {
     <div class="kpi"><div class="kpi-label">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
   </div>
 
-  <div id="flash" class="flash" role="status" aria-live="polite" class="initially-hidden"></div>
-  <section id="attention" class="attention" role="status" aria-live="polite" class="initially-hidden"></section>
+  <div id="flash" class="flash initially-hidden" role="status" aria-live="polite"></div>
+  <section id="attention" class="attention initially-hidden" role="status" aria-live="polite"></section>
 
   <div id="accountRows" class="card rows"><div class="row"><span class="row-name">Loading…</span></div></div>
 
@@ -173,7 +173,7 @@ export function dashboardHtml(): Response {
   </nav>
 
   <section id="tab-activity" role="tabpanel" aria-label="activity" class="panel active">
-    <div class="block" id="previewBlock" class="initially-hidden">
+    <div class="block initially-hidden" id="previewBlock">
       <h2>Dry-run preview</h2>
       <p class="hint">What a live run would do right now. Nothing below has been changed.</p>
       <div id="preview"></div>
@@ -203,7 +203,7 @@ export function dashboardHtml(): Response {
       <h2>Transaction reconcile</h2>
       <p class="hint">Read-only, row by row. Each bank transaction is matched to one YNAB row using the same rules as the sync (identity first, then amount + date + payee, one-to-one). Anything left over is listed. Items the worker skips on purpose are listed separately.</p>
       <div class="actions"><label class="inline">Days <select id="reconDays"><option>7</option><option selected>14</option><option>21</option><option>30</option><option>60</option><option>90</option></select></label><button class="btn primary" data-action="run-reconcile">Run reconcile</button></div>
-      <div id="recon" class="list" class="mt-14"></div>
+      <div id="recon" class="list mt-14"></div>
     </div>
   </section>
 
@@ -246,7 +246,7 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Admin token</h2>
       <p class="hint">Stored only in this browser.</p>
-      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" class="no-margin"><button class="btn primary" data-action="save-token">Save</button><button class="btn ghost" data-action="clear-token">Clear</button></div></div>
+      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions no-margin"><button class="btn primary" data-action="save-token">Save</button><button class="btn ghost" data-action="clear-token">Clear</button></div></div>
     </div>
     <div class="block">
       <h2>Bank connections</h2>
@@ -652,8 +652,8 @@ async function loadStuck(btn) {
     try {
       var d = await api("/debug/stuck-pending", undefined, btn ? undefined : false);
       var list = d.entries || [];
-      if (!list.length) { $("stuckOut").innerHTML = '<p class="small" class="m-6-0-12">No stuck pending rows recorded.</p>'; return; }
-      $("stuckOut").innerHTML = '<div class="card scroll" class="m-8-0-14"><table class="table"><tr><th>Account</th><th>Row</th><th class="num">Amount</th><th>What Plaid said</th><th>Status</th></tr>' +
+      if (!list.length) { $("stuckOut").innerHTML = '<p class="small m-6-0-12">No stuck pending rows recorded.</p>'; return; }
+      $("stuckOut").innerHTML = '<div class="card scroll m-8-0-14"><table class="table"><tr><th>Account</th><th>Row</th><th class="num">Amount</th><th>What Plaid said</th><th>Status</th></tr>' +
         list.map(function (e) {
           var plaid = e.plaid_posted_linked ? "Posted version, linked: " + e.plaid_posted_linked.name + " " + money(e.plaid_posted_linked.amount) + " on " + e.plaid_posted_linked.date
             : (e.unlinked_posted_lookalikes || []).length ? "Posted look-alikes (not linked): " + e.unlinked_posted_lookalikes.map(function (c) { return c.name + " " + money(c.amount) + " on " + c.date; }).join("; ")
@@ -670,12 +670,12 @@ async function tracePending(btn) {
   await busy(btn, async function () {
     try {
       var d = await api("/debug/pending-trace?account=" + encodeURIComponent(a));
-      var head = '<p class="small" class="p-10-14-0 no-margin"><strong>' + esc(pretty(a)) + ':</strong> Plaid currently lists <strong>' + d.plaid_pending_count + '</strong> pending charge(s); YNAB has <strong>' + d.ynab_uncleared_worker_rows + '</strong> pending row(s) from the worker. Plaid last got data from the bank: ' + esc(d.plaid_last_bank_update ? when(d.plaid_last_bank_update) + " (" + ago(d.plaid_last_bank_update) + ")" : "unknown") + (d.window_truncated ? " · bank data truncated" : "") + "</p>";
+      var head = '<p class="small p-10-14-0 no-margin"><strong>' + esc(pretty(a)) + ':</strong> Plaid currently lists <strong>' + d.plaid_pending_count + '</strong> pending charge(s); YNAB has <strong>' + d.ynab_uncleared_worker_rows + '</strong> pending row(s) from the worker. Plaid last got data from the bank: ' + esc(d.plaid_last_bank_update ? when(d.plaid_last_bank_update) + " (" + ago(d.plaid_last_bank_update) + ")" : "unknown") + (d.window_truncated ? " · bank data truncated" : "") + "</p>";
       var rows = (d.rows || []).map(function (r) {
         var looks = (r.unlinked_posted_lookalikes || []).map(function (c) { return c.name + " " + money(c.amount) + " on " + c.date; }).join("; ");
         return "<tr><td>" + esc(r.date) + "</td><td>" + esc(r.payee) + '</td><td class="num">' + money(r.amount) + "</td><td>" + esc(r.verdict) + (looks ? '<br><span class="small">Posted look-alikes: ' + esc(looks) + "</span>" : "") + "</td></tr>";
       }).join("");
-      $("traceOut").innerHTML = '<div class="card scroll" class="m-8-0-14">' + head + (rows ? '<table class="table"><tr><th>Date</th><th>Payee</th><th class="num">Amount</th><th>What Plaid says about it</th></tr>' + rows + "</table>" : '<p class="small" class="p-0-14-10">No pending rows from the worker.</p>') + "</div>";
+      $("traceOut").innerHTML = '<div class="card scroll m-8-0-14">' + head + (rows ? '<table class="table"><tr><th>Date</th><th>Payee</th><th class="num">Amount</th><th>What Plaid says about it</th></tr>' + rows + "</table>" : '<p class="small p-0-14-10">No pending rows from the worker.</p>') + "</div>";
     } catch (e) { flash([e.message], "bad"); }
   });
 }
