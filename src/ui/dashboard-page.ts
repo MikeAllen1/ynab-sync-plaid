@@ -116,7 +116,7 @@ export function dashboardHtml(): Response {
     .recovery p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
     pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: var(--r-md); overflow: auto; max-height: 460px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     .small { font-size: 12px; color: var(--muted); }
-    .initially-hidden { display:none; } .mt-14 { margin-top:14px; } .no-margin { margin:0; }
+    .initially-hidden { display:none !important; } .is-busy { opacity:.5; } .mt-14 { margin-top:14px; } .no-margin { margin:0; }
     .m-6-0-12 { margin:6px 0 12px; } .m-8-0-14 { margin:8px 0 14px; }
     .p-10-14-0 { padding:10px 14px 0; } .p-0-14-10 { padding:0 14px 10px; }
     .money-neg { color: var(--bad); } .money-pos { color: var(--ok); }
@@ -336,11 +336,11 @@ var flashTimer = null;
 function flash(items, level) {
   var el = $("flash");
   if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
-  if (!items || !items.length) { el.style.display = "none"; el.innerHTML = ""; return; }
-  el.style.display = "";
+  if (!items || !items.length) { el.classList.add("initially-hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("initially-hidden");
   el.className = "flash" + (level === "bad" ? " bad" : level === "warn" ? " warn" : "");
   el.innerHTML = "<ul>" + items.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>";
-  flashTimer = setTimeout(function () { el.style.display = "none"; }, 120000);
+  flashTimer = setTimeout(function () { el.classList.add("initially-hidden"); }, 120000);
 }
 // Backwards-compatible name used by the rules/settings code for action results.
 function attention(items, level) { flash(items, level === "ok" ? "ok" : level); }
@@ -348,7 +348,8 @@ function attention(items, level) { flash(items, level === "ok" ? "ok" : level); 
 // The status banner: exactly what the server says needs attention.
 function renderBanner(list) {
   var el = $("attention");
-  if (!list || !list.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+  if (!list || !list.length) { el.classList.add("initially-hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("initially-hidden");
   var bad = list.some(function (x) { return x.level === "bad"; });
   el.style.display = "";
   el.className = "attention" + (bad ? "" : " warn");
@@ -553,7 +554,7 @@ function renderPreview(data) {
     (p.matched_existing || []).forEach(function (m) { rows.push("<tr><td>" + esc(pretty(r.account)) + "</td><td>Link (no new row)</td><td>" + esc(m.bank_date) + "</td><td>" + esc(m.bank_payee) + ": already in YNAB as your row " + esc(m.ynab_row_payee) + " dated " + esc(m.ynab_row_date) + '</td><td class="num">' + milli(m.amount) + "</td></tr>"); });
     p.deletes.forEach(function (x) { rows.push("<tr><td>" + esc(pretty(r.account)) + "</td><td>Remove</td><td>" + esc(x.date) + "</td><td>" + esc(x.payee) + " (" + esc(x.reason) + ')</td><td class="num">' + milli(x.amount) + "</td></tr>"); });
   });
-  $("previewBlock").style.display = "";
+  $("previewBlock").classList.remove("initially-hidden");
   $("preview").innerHTML = rows.length ? '<div class="card scroll"><table class="table"><tr><th>Account</th><th>Action</th><th>Date</th><th>Payee</th><th class="num">Amount</th></tr>' + rows.join("") + "</table></div>" : '<div class="empty">Nothing to do. YNAB already matches the bank.</div>';
   openTab("activity");
 }
@@ -591,7 +592,7 @@ async function runSync(btn) {
     try {
       if (dry()) { renderPreview(await api("/dry-run" + acctQuery("?"))); flash(["Dry run: the preview below shows what a live sync would do. Nothing was changed."], "ok"); return; }
       var d = await api("/sync" + acctQuery("?"), { method: "POST" });
-      $("previewBlock").style.display = "none";
+      $("previewBlock").classList.add("initially-hidden");
       await loadAll();
       var s = summarizeRun(d, "Sync of " + (selected() ? pretty(selected()) : "all accounts"));
       flash(s.items, s.level);
@@ -613,7 +614,7 @@ async function rescan(btn) {
 async function recheck(btn) {
   flash([]);
   await busy(btn, async function () {
-    $("audit").style.opacity = ".5";
+    $("audit").classList.add("is-busy");
     try {
       await loadItems(false);
       var q = selected() ? "?account=" + encodeURIComponent(selected()) : "";
@@ -624,7 +625,7 @@ async function recheck(btn) {
       var s = audit.summary || {};
       flash(["Re-check of " + (selected() ? pretty(selected()) : "all accounts") + " done: " + (s.healthy || 0) + " healthy, " + (s.warning || 0) + " to check, " + (s.needs_attention || 0) + " needing attention."], (s.needs_attention ? "bad" : s.warning ? "warn" : "ok"));
     } catch (e) { flash([e.message], "bad"); }
-    finally { $("audit").style.opacity = ""; }
+    finally { $("audit").classList.remove("is-busy"); }
   });
 }
 async function undo(btn) {
