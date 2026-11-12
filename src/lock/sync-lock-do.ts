@@ -5,6 +5,10 @@ import { isDurableStateKey } from "../store/durable-state";
 // mutex and the small bounded diagnostic histories. KV read/modify/write is not
 // atomic; these append operations use a storage transaction so concurrent syncs
 // and webhooks cannot overwrite one another's history entries.
+export const AUTH_WINDOW_MS = 15 * 60 * 1000;
+export const AUTH_FAILS_PER_IP = 10;
+export const AUTH_FAILS_GLOBAL = 50;
+
 const HISTORY_LIMITS: Record<string, number> = {
   event_log: 200,
   webhook_history: 20,
@@ -175,6 +179,29 @@ export class SyncLock {
         return Response.json({ ok: true, ...result });
       }
       return new Response("not found", { status: 404 });
+    }
+
+    // Failed admin-token attempts, per client IP and globally, in a rolling window.
+    // "/auth/check" says whether a key is currently throttled; "/auth/fail" records a
+    // failure. Successful logins don't reset anything: the window simply rolls.
+    if ((url.pathname === "/auth/check" || url.pathname === "/auth/fail") && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch { return Response.json({ error: "invalid auth request" }, { status: 400 }); }
+      const keys = (Array.isArray(body?.keys) ? body.keys : []).map((k: unknown) => String(k)).filter((k: string) => /^[a-z]+:[\w.:-]{1,80}$/.test(k)).slice(0, 4);
+      const limits: Record<string, number> = { ip: AUTH_FAILS_PER_IP, global: AUTH_FAILS_GLOBAL };
+      const result = await this.state.storage.transaction(async txn => {
+        let retryAfterMs = 0;
+        for (const key of keys) {
+          const stored = await txn.get<number[]>(`auth_fail:${key}`);
+          const live = (Array.isArray(stored) ? stored : []).filter(ts => Number.isFinite(ts) && now - ts < AUTH_WINDOW_MS);
+          if (url.pathname === "/auth/fail") live.push(now);
+          if (live.length) await txn.put(`auth_fail:${key}`, live.slice(-200)); else await txn.delete(`auth_fail:${key}`);
+          const limit = limits[key.split(":")[0]] ?? AUTH_FAILS_PER_IP;
+          if (live.length >= limit) retryAfterMs = Math.max(retryAfterMs, live[live.length - limit] + AUTH_WINDOW_MS - now);
+        }
+        return { blocked: retryAfterMs > 0, retry_after_seconds: Math.ceil(retryAfterMs / 1000) };
+      });
+      return Response.json(result);
     }
 
     if (url.pathname === "/ynab-rate/reserve" && request.method === "POST") {

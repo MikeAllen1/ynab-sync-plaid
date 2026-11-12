@@ -49,7 +49,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, isHeaderAuthenticated, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, checkAdminTokenAttempt, constantTimeEqual, createAdminSessionValue, isHeaderAuthenticated, json, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -130,7 +130,8 @@ export const workerEntry = {
       if (req.method === "POST") {
         if (!env.ADMIN_TOKEN) return json({ ok: false, error: "ADMIN_TOKEN is not configured" }, 500);
         const supplied = req.headers.get("x-admin-token") || "";
-        if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+        const refused = await checkAdminTokenAttempt(req, env, supplied);
+        if (refused) return refused;
         const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
