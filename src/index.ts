@@ -36,7 +36,7 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
@@ -492,6 +492,44 @@ export const workerEntry = {
         const accounts = await saveAccountsMerged(env, body.accounts);
         const settings = await putAccountAutomationSettings(env, body.settings);
         return { ok: true, saved: accounts.length, settings };
+      });
+    }
+
+    // Explicit account-ID migration for the rare case Plaid cannot reconcile an
+    // account ID. This is separate from ordinary settings saves and requires
+    // operator confirmation that the new Plaid account is the same real account.
+    if (url.pathname === "/accounts/migrate-plaid-id") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
+      const unauthorized = await requireAdmin(req, env);
+      if (unauthorized) return unauthorized;
+      return lockedJson(env, async () => {
+        const body = await req.json() as any;
+        const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
+        const linkId = String(body.link_id || "").trim();
+        if (!nickname || !linkId || body.confirm_same_account !== true) {
+          return { ok: false, error: "Provide nickname, link_id, and confirm_same_account: true after verifying the new bank account is the same real-world account." };
+        }
+        const pendingKey = "pending_link:" + linkId;
+        const pending = await readJson(env, pendingKey, null);
+        if (!pending?.access_token || !pending?.item_id) return { ok: false, error: "That bank link expired or is invalid. Link the bank again." };
+        const current = (await getAccounts(env)).find(a => a.nickname === nickname);
+        if (!current) return { ok: false, error: "No mapped account named " + nickname + "." };
+        if (String(body.confirm_ynab_account_id || "") !== current.ynab_account_id) {
+          return { ok: false, error: "confirm_ynab_account_id must exactly match the existing YNAB destination. Migration cannot change the YNAB account." };
+        }
+        const newPlaidAccountId = String(body.plaid_account_id || "").trim();
+        if (!newPlaidAccountId) return { ok: false, error: "plaid_account_id is required." };
+        const plaidAccounts = await plaidCall(env, "/accounts/get", { access_token: pending.access_token });
+        if (!(plaidAccounts.accounts || []).some((a: any) => a.account_id === newPlaidAccountId)) {
+          return { ok: false, error: "The selected Plaid account does not belong to the newly linked Item." };
+        }
+        const ynabAccounts = await ynabGetAccounts(env);
+        if (!ynabAccounts.some((a: any) => a.id === current.ynab_account_id && !a.closed && !a.deleted)) {
+          return { ok: false, error: "The existing YNAB destination is no longer active; migration was not performed." };
+        }
+        const result = await migratePlaidAccountIdentity(env, nickname, pending.access_token, newPlaidAccountId, pending.item_id, current.ynab_account_id);
+        await env.SYNC_STATE.delete(pendingKey);
+        return { ok: true, migration: result, note: "Previous Plaid-ID state was retained. The new Plaid ID starts with a fresh cursor and bootstraps against the existing YNAB register. Run a dry run and verify the account before enabling writes." };
       });
     }
 
