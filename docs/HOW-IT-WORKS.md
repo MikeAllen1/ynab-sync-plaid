@@ -94,8 +94,10 @@ the bank, a hold the bank's feed doesn't list. A difference that's explained isn
 
 ## Undo
 
-Every sync records what it added and changed. *Undo…* on the dashboard shows you exactly what it will remove
-and asks first. If you delete a worker row in YNAB yourself, YNAB remembers the import id, and the worker
+Every sync records the rows it added. *Undo…* on the dashboard removes those rows, shows you exactly which first,
+and asks before it does. It only removes added rows: it doesn't reverse anything else a sync did. A row it
+marked posted stays posted, a pending row it removed stays removed (the charge comes back as its posted row),
+and an amount or date it updated keeps the new value. Rows that have since posted or been reconciled are kept. If you delete a worker row in YNAB yourself, YNAB remembers the import id, and the worker
 respects that: it won't re-add the same charge.
 
 ## Where the code for each part lives

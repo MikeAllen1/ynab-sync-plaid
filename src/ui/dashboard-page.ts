@@ -260,7 +260,7 @@ export function dashboardHtml(): Response {
 
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
-      <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" onclick="undo(this)">Undo…</button></div>
+      <div class="recovery"><div><strong>Undo a sync</strong><p>Removes the rows a sync added. It does not reverse anything else that sync did (rows it marked posted, pending rows it removed, amounts it updated). Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" onclick="undo(this)">Undo…</button></div>
       <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" onclick="show('/force-refresh', this, 'POST')">Refresh Plaid</button></div>
       <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/plaid/raw?account=' + a + '&days=30&count=100'); })">Show</button></div>
       <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" onclick="tracePending(this)">Explain</button></div>
@@ -639,8 +639,8 @@ async function undo(btn) {
     try {
       var list = await api("/undo?list=true");
       if (!list.runs || !list.runs.length) { flash(["Nothing to undo."], "warn"); return; }
-      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s)"; }).join(String.fromCharCode(10));
-      var pick = prompt("Which sync to undo? Enter its number:" + String.fromCharCode(10) + menu, "0");
+      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s) added"; }).join(String.fromCharCode(10));
+      var pick = prompt("Remove the rows which sync added? Enter its number:" + String.fromCharCode(10) + menu, "0");
       if (pick === null) return;
       var preview = await api("/undo?index=" + encodeURIComponent(pick));
       if (!preview.target) { flash([preview.error || "No such sync."], "bad"); return; }
