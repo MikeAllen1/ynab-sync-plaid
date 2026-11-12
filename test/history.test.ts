@@ -164,3 +164,22 @@ test("an expired lock can be replaced, but the stale owner cannot renew or relea
     Date.now = originalNow;
   }
 });
+
+test("unreadable legacy undo history fails closed instead of reporting nothing to undo", async () => {
+  const { env } = makeEnv({ undo_log: "{broken" });
+  // Force the Durable Object read path to fail so the legacy fallback is exercised.
+  env.SYNC_LOCK = {
+    idFromName: () => "global",
+    get: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) })
+  } as any;
+  await assert.rejects(() => getUndoLog(env), /UNDO_LOG_UNREADABLE/);
+});
+
+test("malformed legacy undo entries fail closed", async () => {
+  const { env } = makeEnv({ undo_log: JSON.stringify([{ ts: "2026-01-01", items: [{ id: "x" }] }]) });
+  env.SYNC_LOCK = {
+    idFromName: () => "global",
+    get: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) })
+  } as any;
+  await assert.rejects(() => getUndoLog(env), /UNDO_LOG_UNREADABLE/);
+});
