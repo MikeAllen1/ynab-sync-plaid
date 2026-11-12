@@ -330,6 +330,7 @@ export function contentMatch(
 
   let best: YNABExistingTransaction | null = null;
   let bestDays = Infinity;
+  let equallyClose = false;
   for (const e of rows) {
     if (!isEligible(e)) continue;
     if (Number(e.amount || 0) !== milli) continue;
@@ -364,9 +365,12 @@ export function contentMatch(
           (upper.includes("AMERICAN EXPRESS") || upper.includes("AMEX"));
       }
     }
-    if (ok && dd < bestDays) { best = e; bestDays = dd; }
+    if (ok && dd < bestDays) { best = e; bestDays = dd; equallyClose = false; }
+    else if (ok && dd === bestDays) equallyClose = true;
   }
-  return best;
+  // Two equally close rows are not an identity signal. Do not let register order
+  // decide which financial record gets claimed.
+  return equallyClose ? null : best;
 }
 
 // Last resort, after all name matching: pair a leftover bank charge with a leftover
