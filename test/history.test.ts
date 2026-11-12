@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { SyncLock } from "../src/lock/sync-lock-do";
 import { flushEventLog, getEventLog, LogEvent } from "../src/store/event-log";
 import { appendWebhookHistory, getWebhookHistory } from "../src/plaid/webhooks";
+import { dropLease, holdLease, keepLeaseAlive } from "../src/lock/lock";
 import type { Env } from "../src/types";
 
 function makeEnv(seed: Record<string, string> = {}) {
@@ -112,12 +113,15 @@ test("an expired lock can be replaced, but the stale owner cannot renew or relea
   try {
     const first = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
     assert.equal(first.acquired, true);
+    holdLease(env, { id: first.id, mode: "durable-object" });
 
     now += 901_000;
     const second = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
     assert.equal(second.acquired, true);
     assert.notEqual(second.id, first.id);
     assert.equal(second.stole_expired, true);
+    await assert.rejects(keepLeaseAlive(), /SYNC_LOCK lease is no longer owned by this run/);
+    dropLease({ id: first.id, mode: "durable-object" });
 
     const staleRenew = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(first.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
     assert.equal(staleRenew.renewed, false);
