@@ -40,7 +40,7 @@ import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomatio
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
-import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
+import { WORKER_PENDING_PREFIX } from "./sync/matching";
 import { accountIsDue, syncAll } from "./sync/run";
 import { builtinPaymentMatch, roundMoney } from "./sync/transfers";
 import { rollbackSync } from "./sync/undo";
@@ -302,9 +302,9 @@ export const workerEntry = {
         accounts.map((a: any) => ({
           nickname: a.nickname,
           institution: a.institution || "",
-          plaid_account_id: a.plaid_account_id,
-          // Groups accounts that share one bank login, without revealing the token.
-          login: a.item_id || `login-${shortStableHash(a.plaid_access_token || a.nickname)}`
+          // The endpoint is explicitly opt-in; never return token previews or stable
+          // token-derived fingerprints, even when detailed diagnostics are enabled.
+          plaid_account_id: a.plaid_account_id
         }))
       );
     }
