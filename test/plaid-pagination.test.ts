@@ -38,7 +38,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   }
 });
 
-test("Plaid transaction window stops safely on an empty page even when provider total is inconsistent", async () => {
+test("Plaid transaction window marks an empty page before provider total as incomplete", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
