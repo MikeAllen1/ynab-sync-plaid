@@ -1,4 +1,5 @@
 import { runAccountAudit } from "../audit/audit";
+import { ALERT_TIMEOUT_MS, fetchWithTimeout, outbound, subrequestBudget } from "../util/http";
 import { AUDIT_DAYS, AUDIT_MIN_INTERVAL_MINUTES, DEFAULT_SYNC_FREQUENCY_MINUTES, STALE_PENDING_DAYS, WORKER_VERSION } from "../constants";
 import { getItemHealth } from "../health/items";
 import { prettyNickname, readJson } from "../health/status";
@@ -87,6 +88,10 @@ export function isAutomaticTrigger(trigger?: string): boolean {
 // syncs the same account twice within this many minutes.
 export const WEBHOOK_MIN_GAP_MINUTES = 2;
 
+// Outbound requests an ordinary account sync makes (bank feed page, bank window, two YNAB
+// register reads, a create and an update), measured with scripts/bench/day-bench.ts.
+export const REQUESTS_PER_ACCOUNT = 6;
+
 export async function accountIsDue(env: Env, acct: AccountConfig, setting: AccountAutomationSetting, overrideIntervalMinutes?: number): Promise<{ due: boolean; nextDueMinutes: number }> {
   const lastSyncRaw = await env.SYNC_STATE.get(`last_account_sync:${acct.plaid_account_id}`);
   if (!lastSyncRaw) return { due: true, nextDueMinutes: 0 };
@@ -100,6 +105,7 @@ export async function accountIsDue(env: Env, acct: AccountConfig, setting: Accou
 }
 
 export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandle | null): Promise<any> {
+  const startedAt = Date.now();
   options = { ...options, runId: options.runId || crypto.randomUUID() };
   let accounts: AccountConfig[];
   let accountSettings: AccountAutomationSetting[];
@@ -127,7 +133,29 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
     }
   }
 
+  // Every writing run spends a bounded number of outbound requests (see util/http.ts).
+  // Automatic runs take the accounts that waited longest first, so when not everything
+  // fits in one run, the ones left out are first in line next time instead of starved.
+  const budgeted = !options.dryRun;
+  const budget = subrequestBudget(env);
+  if (budgeted && isAutomaticTrigger(options.trigger) && accounts.length > 1) {
+    const stamps = await Promise.all(accounts.map(a => env.SYNC_STATE.get(`last_account_sync:${a.plaid_account_id}`).catch(() => null)));
+    // Accounts at a bank login that failed last run go after the rest: they're never
+    // stamped as synced, so "oldest first" alone would put them first every time, and a
+    // bank that keeps failing part-way (a backlog bigger than one run's requests) would
+    // use up every run.
+    const failed = new Set(((await readJson(env, "last_error", null).catch(() => null))?.errors || []).map((e: any) => e?.account));
+    const failingLogins = new Set(accounts.filter(a => failed.has(a.nickname)).map(a => a.plaid_access_token));
+    const order = accounts.map((a, i) => ({ a, i, at: stamps[i] || "", bad: failingLogins.has(a.plaid_access_token) ? 1 : 0 }));
+    order.sort((x, y) => x.bad - y.bad || (x.at < y.at ? -1 : x.at > y.at ? 1 : x.i - y.i));
+    accounts = order.map(o => o.a);
+  }
+
   for (const acct of accounts) {
+    // "Sync now" for one account reports on that account only. (This check used to
+    // come after the pause and sync-off checks, so a one-account sync also listed
+    // every other switched-off account as "skipped", which read as if it had tried.)
+    if (options.onlyAccount && acct.nickname !== options.onlyAccount) continue;
     try {
       if (lock) await renewSyncLock(env, lock);
       const accountSetting = settingForAccount(accountSettings, acct);
@@ -145,8 +173,6 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
         continue;
       }
 
-      if (options.onlyAccount && acct.nickname !== options.onlyAccount) continue;
-
       const bootstrapped = await env.SYNC_STATE.get(`bootstrapped:${acct.plaid_account_id}`);
       if (bootstrapped && isAutomaticTrigger(options.trigger)) {
         const pushedByItsBank = !!options.webhookItemId && (acct.item_id || itemIdByNickname[acct.nickname]) === options.webhookItemId;
@@ -155,6 +181,12 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
           results.push({ account: acct.nickname, status: "skipped - not due", next_due_minutes: nextDueMinutes, automation: accountSetting });
           continue;
         }
+      }
+
+      if (budgeted && outbound.count + REQUESTS_PER_ACCOUNT > budget) {
+        // Not stamped as synced, so it's still due (and first in line) on the next tick.
+        results.push({ account: acct.nickname, status: "skipped - request budget", note: `This run used its ${budget} outbound requests; it syncs on the next run.`, automation: accountSetting });
+        continue;
       }
 
       if (!bootstrapped) {
@@ -216,8 +248,11 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
   // webhook's background time is short); the next cron tick does.
   // A sync you start yourself always ends with a fresh health check: you're looking at
   // the dashboard, and "Last synced: just now" next to an hour-old Healthy is a lie.
+  // The hourly check reads each bank's balance and each account's YNAB register. When this
+  // run's request budget can't cover it, it waits for the next tick (it's still due then).
+  const auditCost = new Set(accounts.map(a => a.plaid_access_token)).size + accounts.length + 2;
   const auditWillRun = !String(options.trigger || "").startsWith("webhook") && !options.onlyAccount &&
-    (String(options.trigger || "").startsWith("manual") || await shouldRunAudit(env));
+    (String(options.trigger || "").startsWith("manual") || await shouldRunAudit(env)) && !(budgeted && outbound.count + auditCost > budget);
   const isManual = !isAutomaticTrigger(options.trigger);
   const worthWriting = anyWork || errors.length > 0 || partials.length > 0 || isManual || auditWillRun;
   if (worthWriting) await env.SYNC_STATE.put("last_sync_summary", JSON.stringify(summary));
@@ -305,7 +340,25 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
   }
 
   await maybeSendHealthAlert(env, summary, errors);
+  logRun(summary, startedAt);
   return summary;
+}
+
+// One structured line per sync run for Cloudflare's logs (`wrangler tail`, or Workers Logs
+// with [observability] enabled): status, per-account outcome, requests used, duration.
+// No amounts, payees or tokens.
+export function logRun(summary: any, startedAt: number): void {
+  try {
+    const results: any[] = summary?.results || [];
+    const count = (re: RegExp) => results.filter(r => re.test(String(r.status || ""))).length;
+    console.log(JSON.stringify({
+      event: "sync_run", trigger: summary?.trigger, status: summary?.status, ms: Date.now() - startedAt, outbound_requests: outbound.count,
+      accounts: { ok: count(/^(ok|partial|auto-bootstrapped)$/), error: count(/^(error|bootstrap_failed)$/), deferred: count(/request budget/), skipped: count(/^skipped/) },
+      created: results.reduce((n, r) => n + (r.created_count || 0), 0), updated: results.reduce((n, r) => n + (r.updated_count || 0), 0),
+      errors: results.filter(r => r.status === "error" || r.status === "bootstrap_failed").map(r => ({ account: r.account, error: String(r.friendly_error || r.error || "").slice(0, 160) })),
+      audit: summary?.account_audit ? "ran" : summary?.account_audit_error ? "failed" : "skipped",
+    }));
+  } catch { /* logging never affects the run */ }
 }
 
 export async function shouldRunAudit(env: Env): Promise<boolean> {
@@ -375,10 +428,10 @@ async function sendChannelAlert(
       ? `Your YNAB sync failed: ${first.friendly_error || first.error || "sync error"}${first.account ? ` (${prettyNickname(first.account)})` : ""}.\n\nThe dashboard has the details:\n${origin}/dashboard`
       : `Your YNAB sync is working again.${currentState === "warning" ? " The dashboard has a warning to look at." : ""}\n${origin}/dashboard`;
     try {
-      const resp = await fetch("https://api.resend.com/emails", {
+      const resp = await fetchWithTimeout("https://api.resend.com/emails", {
         method: "POST", headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from: env.ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>", to: [to], subject, text })
-      });
+      }, ALERT_TIMEOUT_MS);
       if (!resp.ok) throw new Error(`Resend refused the email (${resp.status})`);
       await env.SYNC_STATE.put(prevKeyName, stateKey);
       const f = await readJson(env, "last_alert_failure", null);
@@ -410,7 +463,7 @@ async function sendChannelAlert(
   try {
     // Keys cover the common targets: Slack ("text"), Discord ("content"), and a
     // generic "message". Point ALERT_WEBHOOK_URL at whatever you use.
-    const resp = await fetch(env.ALERT_WEBHOOK_URL!, {
+    const resp = await fetchWithTimeout(env.ALERT_WEBHOOK_URL!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -421,7 +474,7 @@ async function sendChannelAlert(
         trigger: summary.trigger || "unknown",
         ts: new Date().toISOString()
       })
-    });
+    }, ALERT_TIMEOUT_MS);
     if (!resp.ok) throw new Error(`alert webhook answered ${resp.status}`);
     await env.SYNC_STATE.put(prevKeyName, stateKey);
     const f = await readJson(env, "last_alert_failure", null);

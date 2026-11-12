@@ -106,23 +106,28 @@ function openLink(linkToken, receivedRedirectUri, onSuccess) {
   var config = {
     token: linkToken,
     onSuccess: onSuccess,
-    onExit: function (err) { if (err) setStatus("Link closed: " + (err.error_message || err.error_code || "cancelled"), false); document.getElementById("addBtn").disabled = false; }
+    onExit: function (err) { reconnecting = false; setStatus(err ? "Link closed: " + (err.error_message || err.error_code || "cancelled") : "Link closed. Nothing was changed.", !err); document.getElementById("addBtn").disabled = false; }
   };
   if (receivedRedirectUri) config.receivedRedirectUri = receivedRedirectUri;
   Plaid.create(config).open();
 }
 
+var reconnecting = false;
 function reconnect(nickname) {
+  // One Link window at a time: a double click used to open two.
+  if (reconnecting) return;
+  reconnecting = true;
   setStatus("Starting a secure reconnect for " + nickname + "…", true);
   post("/link-token", { nickname: nickname }).then(function (d) {
-    if (!d.ok) { setStatus("Could not start: " + (d.error || "unknown"), false); return; }
+    if (!d.ok) { reconnecting = false; setStatus("Could not start: " + (d.error || "unknown"), false); return; }
     sessionStorage.setItem("link_token", d.link_token);
     sessionStorage.setItem("link_mode", "update");
     sessionStorage.setItem("link_nickname", nickname);
     openLink(d.link_token, null, onReconnected);
-  }).catch(function (e) { setStatus("Network error: " + e.message, false); });
+  }).catch(function (e) { reconnecting = false; setStatus("Network error: " + e.message, false); });
 }
 function onReconnected() {
+  reconnecting = false;
   sessionStorage.removeItem("link_token");
   setStatus("Reconnected. Re-checking the connection…", true);
   var nick = sessionStorage.getItem("link_nickname") || "";
@@ -163,7 +168,7 @@ function onLinked(publicToken, metadata) {
         '<label class="muted"><input type="checkbox" data-f="card" style="width:auto"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
         '<button data-click="addAccount">Add this account</button></div>';
     }).join("");
-    setStatus("Pick the accounts to add. Each is added with sync off: set its YNAB balance to the bank's posted balance, then turn its sync on in the dashboard (Settings).", true);
+    setStatus("Choose the accounts to sync. Each one is added with sync off, so nothing is imported until you turn it on in the dashboard (Settings).", true);
     document.getElementById("addBtn").disabled = false;
   }).catch(function (e) { setStatus("Error: " + e.message, false); document.getElementById("addBtn").disabled = false; });
 }
@@ -182,12 +187,18 @@ function addAccount(btn) {
   if (!body.nickname || !body.ynab_account_id) { setStatus("Give it a nickname and choose its YNAB account.", false); return; }
   var chosen = card.querySelector('[data-f="ynab"]').selectedOptions[0];
   var fedBy = chosen && chosen.getAttribute("data-fed-by");
-  if (fedBy && !confirm(chosen.textContent.replace(/ \(already fed by .*\)$/, "") + " is already fed by " + fedBy + ". Feeding one YNAB account from two bank accounts usually imports every transaction twice (double). Use it anyway?")) return;
+  if (fedBy && !confirm(chosen.textContent.replace(/ \\(already fed by .*\\)$/, "") + " is already fed by " + fedBy + ". Feeding one YNAB account from two bank accounts usually imports every transaction twice (double). Use it anyway?")) return;
   btn.disabled = true;
   post("/accounts/add", body).then(function (d) {
     if (!d.ok) { setStatus(d.error || "Could not add", false); btn.disabled = false; return; }
     btn.textContent = "Added"; setStatus(d.note, true); loadBanks();
-  }).catch(function (e) { setStatus("Network error, the account was not added: " + e.message, false); btn.disabled = false; });
+  }).catch(function (e) {
+    // The request may have reached the worker even though no answer came back, so
+    // don't claim it wasn't added. Trying again is safe: the worker recognises a
+    // repeat of the same add and reports it as added.
+    setStatus("The connection dropped before the worker answered, so this account may or may not have been added (" + e.message + "). Click Add this account again: if it was added, it will say so; it won't be added twice.", false);
+    btn.disabled = false;
+  });
 }
 
 function prettyName(n) {

@@ -5,19 +5,60 @@ a new major version means you need to do something when you update.
 
 ## Unreleased
 
-- Dashboard: **Pause all syncing** / **Resume syncing** work again (they sent the wrong request and showed "POST only"), and say what they did.
-- Dashboard: the result of a button (or why it failed) stays in view while you scroll, instead of appearing at the top of the page; click it to put it away.
-- Dashboard: edits to skip rules, payee aliases, transfer labels and account settings are no longer thrown away when you switch tabs; "Unsaved changes" shows until you save, and leaving the page asks first.
-- Dashboard: an account that needs reconnecting has a **Reconnect** button on its row (the banner used to point to a "Settings > Reconnect" that didn't exist).
-- Dashboard: **Undo…** lists the recent syncs to pick from instead of asking you to type a number.
-- Dashboard: **Sync now** and **Re-scan** name the account they'll act on when one is picked in the toolbar.
-- Setup: says new accounts are added with sync off (it used to say they'd sync on the next run), marks the bank that needs reconnecting, marks YNAB accounts another bank account already feeds and asks before feeding one twice, and keeps its messages in view.
-- Dashboard: turning an account's sync on reminds you to set its YNAB balance to the bank's posted balance first, and asks on Save.
-- Dashboard: saving two accounts that feed the same YNAB account asks first (it usually imports everything twice).
-- Dashboard: Activity on a phone shows one card per event instead of a squeezed table.
-- Dashboard: the KPI tiles and tabs explain themselves (hover text, and a line under the tabs), so the glossary isn't needed.
-- Account names keep ordinary short words in normal case ("Car Loan", "Bank of the West"); acronyms like PNC, TD and USAA stay capitals.
-- Browser tests for the dashboard and setup pages, desktop and phone (`npm run test:browser`), run in CI.
+Fixes from a workflow audit of the dashboard and setup page:
+
+- **Pause all syncing works.** The button sent a GET and always failed with "POST only".
+- **Deleting a skip rule, alias group or transfer label deletes only that one.** It used to also save every
+  unsaved, half-typed edit on the page (and any unfinished new rule), and a double click on a transfer label's
+  Remove deleted two labels.
+- **A page that's out of date can't overwrite newer settings.** Saving accounts, rules, aliases or labels from a
+  page loaded before a change made elsewhere is refused with an explanation, then reloaded. Before, it could drop
+  a bank account just added on the setup page, or turn back on an account switched off on another device.
+- **Unsaved edits aren't thrown away** when you switch tabs, and leaving the page with unsaved edits (or while a
+  save is still being sent) asks first.
+- **Incomplete entries aren't silently dropped.** Saving a rule without bank text (or an alias or label missing
+  its fields) now says what's missing instead of reporting "saved" and discarding it.
+- **Lost responses are reported honestly.** If the connection drops before the worker answers, the page says the
+  change may have gone through instead of "Failed to fetch"; retrying "Add this account" after a lost response
+  reports it added instead of "already exists".
+- Sync now for one account reports only that account; Undo's preview says when rows it will delete were already
+  approved in YNAB; the setup page no longer says new accounts start syncing (they're added with sync off);
+  results for a previous account choice are cleared when you pick another.
+- `npm run test:browser`: end-to-end browser tests for these workflows (needs Chrome).
+
+Usability fixes from a dashboard audit (`npm run test:ui`: browser tests at desktop and phone width, run in CI):
+
+- The result of a button (or why it failed) stays in view while you scroll, instead of appearing at the top of
+  the page; click it to put it away.
+- An account that needs reconnecting has a **Reconnect** button on its row (the banner used to point to a
+  "Settings > Reconnect" that didn't exist), and the setup page marks the bank that needs it.
+- **Undo…** lists the recent syncs to pick from instead of asking you to type a number.
+- **Sync now** and **Re-scan** name the account they'll act on when one is picked in the toolbar.
+- Turning an account's sync on reminds you to set its YNAB balance to the bank's posted balance first, and asks on
+  Save. Saving (or adding on the setup page) a second bank account that feeds the same YNAB account asks first.
+- Activity on a phone shows one card per event instead of a squeezed table.
+- The KPI tiles and tabs explain themselves (hover text, and a line under the tabs).
+- Account names keep ordinary short words in normal case ("Car Loan", "Bank of the West"); acronyms like PNC, TD
+  and USAA stay capitals.
+- The admin token box describes the one-hour session; the setup page keeps its messages in view.
+
+Reliability fixes from a failure-mode and load review (`test/failure-modes.test.ts`, `scripts/bench/`).
+
+- A provider that times out twice is skipped for the rest of that run, so a Plaid or YNAB outage costs
+  one run two deadlines instead of one per call (which could outlast the cron's time limit).
+- A run whose invocation was cancelled part-way (a webhook sync cut off 30 seconds after its response,
+  a closed dashboard tab, a cron run stopped at its time limit) could make every later sync in the same Cloudflare isolate abort with "SYNC_LOCK lease
+  is no longer owned by this run" until the isolate was recycled. Each run now renews only its own lease.
+- Runs stay inside the Free plan's 50 outbound requests per invocation: accounts that don't fit wait
+  for the next run (oldest first; banks that failed last time go last) instead of failing with
+  "Too many subrequests". With about 9 or more accounts syncing every 15 minutes, most runs used to fail.
+  Set `SUBREQUEST_BUDGET` higher on Workers Paid.
+- Accounts at the same bank login share each Plaid feed page within a run instead of each reading
+  the whole feed (three accounts at one bank used three times the requests).
+- One structured log line per sync run (status, per-account outcome, requests used, duration; no
+  amounts or payees), and `[observability]` turned on in `wrangler.toml.example` so Cloudflare keeps
+  the logs. Copy that block into your own `wrangler.toml`.
+- Faster matching against large YNAB windows (about 60% less CPU per run with a busy register).
 
 ## 1.0.0 — 2026-11-11
 

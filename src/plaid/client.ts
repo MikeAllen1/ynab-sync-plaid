@@ -22,7 +22,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
       secret: env.PLAID_SECRET,
       ...body
     })
-  }, 2, retrySafe);
+  }, 2, { retrySafe, env });
 
   const data: any = await readJsonBody(resp);
 

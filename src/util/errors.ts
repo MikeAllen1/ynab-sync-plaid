@@ -27,6 +27,13 @@ export function friendlyErrorMessage(error: any): string {
   const raw = String(error?.message || error || "");
   const upper = raw.toUpperCase();
 
+  // Cloudflare refuses outbound requests past the invocation's limit (50 on the Free plan).
+  if (/too many subrequests/i.test(raw)) return "This bank had more new activity than one run can read on Cloudflare's Free plan (50 requests per run). It keeps retrying; other banks sync first. If it doesn't clear, raise SUBREQUEST_BUDGET on a Workers Paid plan.";
+  if (/timed out after|isn't responding \(timed out/.test(raw)) {
+    const host = /(api\.ynab\.com|[a-z]+\.plaid\.com|api\.resend\.com)/.exec(raw)?.[1] || "the provider";
+    return `${host.includes("ynab") ? "YNAB" : host.includes("plaid") ? "Plaid" : host} didn't answer in time. This is usually temporary; the next sync retries.`;
+  }
+
   // YNAB first: a YNAB error body can contain words like "internal_server_error"
   // that would otherwise read as a Plaid problem.
   if (upper.startsWith("YNAB")) {

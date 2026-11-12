@@ -13,9 +13,12 @@ import { json } from "../util/http";
 // run unprotected; cron retries in 15 minutes. KV get-then-put is not atomic and
 // must never be used as a mutex for financial writes.
 export const SYNC_LOCK_KEY = "sync:lock";
-// Longer than any realistic run (three accounts, capped retries). Runs renew the
-// lease between accounts, so a slow run keeps its lock.
-export const SYNC_LOCK_TTL_SECONDS = 900;
+// Runs renew the lease between accounts and around every outbound call (at most once
+// a minute), and every outbound call is capped at OUTBOUND_TIMEOUT_MS, so a live run
+// renews well within this. Kept short because a run Cloudflare cancels (a webhook sync
+// past waitUntil's 30 seconds) never reaches its release: until the lease runs out,
+// every sync, Sync now and dashboard change answers "busy". Was 900 s.
+export const SYNC_LOCK_TTL_SECONDS = 180;
 export const SYNC_LOCK_DO_ID = "global";
 
 export interface LockHandle { id: string; mode: "durable-object" | "kv-best-effort"; }
@@ -52,14 +55,39 @@ export async function acquireSyncLock(env: Env): Promise<LockHandle | null> {
 export const activeLeases = new Map<string, { env: Env; lock: LockHandle; renewedAt: number }>();
 export const LEASE_RENEW_EVERY_MS = 60 * 1000;
 
+// Which lease an operation's env belongs to. holdLease tags the env the operation passes
+// down (a symbol property, so `{ ...env }` copies keep it), and the Plaid and YNAB clients
+// hand that env to fetchWithRetry. An API call then renews only its own operation's lease.
+//
+// Why it matters: an operation whose invocation is cancelled (a cron run stopped at the
+// 15-minute limit, a dashboard request whose tab was closed) never reaches its `finally`,
+// so its lease stays in this isolate's map. Its lock expires and the next run takes over;
+// if every API call renewed every lease in the map, that next run would try to renew the
+// abandoned one, be told "no longer owned", and abort, and so would every run after it
+// in the same isolate.
+export const LEASE_OWNER = Symbol.for("ynab-sync.lease-owner");
+
 export function holdLease(env: Env, lock: LockHandle): void {
   activeLeases.set(lock.id, { env, lock, renewedAt: Date.now() });
+  try { (env as any)[LEASE_OWNER] = lock.id; } catch { /* frozen env: falls back to renewing every lease */ }
 }
 export function dropLease(lock: LockHandle): void {
   activeLeases.delete(lock.id);
 }
-export async function keepLeaseAlive(): Promise<void> {
+/**
+ * Renew leases that are due. With the calling operation's env (tagged by holdLease), only
+ * that operation's lease is renewed, and a lost lease aborts only that operation. Without
+ * a tagged env (older callers), every lease held in this isolate is renewed.
+ */
+export async function keepLeaseAlive(owner?: Env): Promise<void> {
   const now = Date.now();
+  const ownId = owner ? (owner as any)[LEASE_OWNER] as string | undefined : undefined;
+  if (ownId !== undefined) {
+    const lease = activeLeases.get(ownId);
+    if (lease && now - lease.renewedAt >= LEASE_RENEW_EVERY_MS) await renewSyncLock(lease.env, lease.lock);
+    return;
+  }
+  if (owner) return;   // an operation that holds no lock has nothing to renew
   for (const lease of activeLeases.values()) {
     if (now - lease.renewedAt < LEASE_RENEW_EVERY_MS) continue;
     await renewSyncLock(lease.env, lease.lock);
@@ -111,7 +139,10 @@ export async function lockedJson(env: Env, fn: () => Promise<any>): Promise<Resp
   }
   holdLease(env, lock);
   try {
-    return json(await fn());
+    // A handler may answer with its own Response (for example a 409 when the page
+    // that sent a save is out of date); anything else is wrapped as JSON.
+    const result = await fn();
+    return result instanceof Response ? result : json(result);
   } finally {
     dropLease(lock);
     await releaseSyncLock(env, lock);

@@ -33,10 +33,10 @@ import { isSyncEnabled, lockedJson } from "./lock/lock";
 import { plaidCall } from "./plaid/client";
 import { debugPlaidRawTransactions, resetRunCache } from "./plaid/fetch";
 import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshBeforeManualSync, verifyPlaidWebhook } from "./plaid/webhooks";
-import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
+import { DEFAULT_PAYEE_ALIASES, PAYEE_ALIASES_KV_KEY, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
-import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, resealAccountTokens, saveAccountConfiguration, tokenStorageMode, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { TRANSFER_LABELS_KV_KEY, getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
+import { ACCOUNT_CONFIG_BUNDLE_KEY, ACCOUNT_MAP_KV_KEY, CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, resealAccountTokens, saveAccountConfiguration, tokenStorageMode, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { withDurableAccountState } from "./store/durable-state";
 import { openToken, sealToken } from "./util/token-crypto";
@@ -47,6 +47,7 @@ import { accountIsDue, syncAll } from "./sync/run";
 import { builtinPaymentMatch, roundMoney } from "./sync/transfers";
 import { rollbackSync } from "./sync/undo";
 import { Env } from "./types";
+import { staleCheck, storedVersion } from "./util/version";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
@@ -56,6 +57,9 @@ import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDel
 
 // Durable Object classes must be exported from the main module.
 export { SyncLock } from "./lock/sync-lock-do";
+
+// Everything the dashboard's "Save accounts" replaces; see util/version.ts.
+const ACCOUNT_CONFIG_KEYS = [ACCOUNT_CONFIG_BUNDLE_KEY, ACCOUNT_MAP_KV_KEY, "account_automation_settings"];
 
 export const workerEntry = {
   // Every request goes through here: a saved configuration that can't be read is
@@ -333,7 +337,7 @@ export const workerEntry = {
       if (unauthorized) return unauthorized;
 
       // Read-only. Settings are saved together with the accounts via /accounts/save.
-      if (req.method === "GET") return json({ settings: await getAccountAutomationSettings(env) });
+      if (req.method === "GET") return json({ settings: await getAccountAutomationSettings(env), config_version: await storedVersion(env, ...ACCOUNT_CONFIG_KEYS) });
       return json({ error: "GET only; save settings with /accounts/save" }, 405);
     }
 
@@ -341,13 +345,15 @@ export const workerEntry = {
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
-      if (req.method === "GET") return json({ rules: await getSkipRules(env), defaults: DEFAULT_SKIP_RULES });
+      if (req.method === "GET") return json({ rules: await getSkipRules(env), defaults: DEFAULT_SKIP_RULES, version: await storedVersion(env, "skip_rules") });
 
       if (req.method === "POST") {
         const body: any = await req.json();
         return lockedJson(env, async () => {
+          const stale = await staleCheck(env, body.expected_version, "skip rules", "skip_rules");
+          if (stale) return stale;
           const rules = await putSkipRules(env, body.rules || []);
-          return { ok: true, rules };
+          return { ok: true, rules, version: await storedVersion(env, "skip_rules") };
         });
       }
 
@@ -369,10 +375,15 @@ export const workerEntry = {
     if (url.pathname === "/transfer-labels") {
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      if (req.method === "GET") return json({ labels: await getTransferLabels(env) });
+      if (req.method === "GET") return json({ labels: await getTransferLabels(env), version: await storedVersion(env, TRANSFER_LABELS_KV_KEY) });
       if (req.method === "POST") {
         const body: any = await req.json();
-        return lockedJson(env, async () => ({ ok: true, labels: await putTransferLabels(env, body.labels || []) }));
+        return lockedJson(env, async () => {
+          const stale = await staleCheck(env, body.expected_version, "transfer labels", TRANSFER_LABELS_KV_KEY);
+          if (stale) return stale;
+          const labels = await putTransferLabels(env, body.labels || []);
+          return { ok: true, labels, version: await storedVersion(env, TRANSFER_LABELS_KV_KEY) };
+        });
       }
       return json({ error: "method not allowed" }, 405);
     }
@@ -381,13 +392,15 @@ export const workerEntry = {
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
 
-      if (req.method === "GET") return json({ aliases: await getPayeeAliases(env), defaults: DEFAULT_PAYEE_ALIASES });
+      if (req.method === "GET") return json({ aliases: await getPayeeAliases(env), defaults: DEFAULT_PAYEE_ALIASES, version: await storedVersion(env, PAYEE_ALIASES_KV_KEY) });
 
       if (req.method === "POST") {
         const body: any = await req.json();
         return lockedJson(env, async () => {
+          const stale = await staleCheck(env, body.expected_version, "payee aliases", PAYEE_ALIASES_KV_KEY);
+          if (stale) return stale;
           const aliases = await putPayeeAliases(env, body.aliases || []);
-          return { ok: true, aliases };
+          return { ok: true, aliases, version: await storedVersion(env, PAYEE_ALIASES_KV_KEY) };
         });
       }
 
@@ -550,8 +563,13 @@ export const workerEntry = {
       if (!Array.isArray(body.accounts) || !Array.isArray(body.settings)) return json({ ok: false, error: "Body must be { accounts: [...], settings: [...] }" }, 400);
       if (body.accounts.length === 0) return json({ ok: false, error: "Refusing to save an empty account list (did the list fail to load?). Nothing was changed." }, 400);
       return lockedJson(env, async () => {
+        // A page loaded before another tab/device changed the accounts must not
+        // overwrite that change (e.g. drop an account just added on the setup page,
+        // or turn back on an account just turned off).
+        const stale = await staleCheck(env, body.expected_version, "account settings", ...ACCOUNT_CONFIG_KEYS);
+        if (stale) return stale;
         const saved = await saveAccountConfiguration(env, body.accounts, body.settings);
-        return { ok: true, saved: saved.accounts.length, settings: saved.settings };
+        return { ok: true, saved: saved.accounts.length, settings: saved.settings, config_version: await storedVersion(env, ...ACCOUNT_CONFIG_KEYS) };
       });
     }
 
@@ -646,7 +664,14 @@ export const workerEntry = {
           return { ok: false, error: "Choose an active YNAB account from this budget." };
         }
         const accounts = await getAccounts(env);
-        if (accounts.some(a => a.nickname === nickname)) return { ok: false, error: `An account named ${nickname} already exists` };
+        // Retrying an add whose response was lost must not report failure for an
+        // account that was in fact added: the same nickname, bank account, YNAB
+        // account and bank login is the same request, already done.
+        const existing = accounts.find(a => a.nickname === nickname);
+        if (existing && existing.plaid_account_id === plaidAccountId && existing.ynab_account_id === ynabAccountId && (!existing.item_id || existing.item_id === pending.item_id)) {
+          return { ok: true, added: nickname, already_added: true, note: "Already added (with sync OFF). Set its YNAB starting balance to the bank's posted balance, then turn its sync on in the dashboard (Settings)." };
+        }
+        if (existing) return { ok: false, error: `An account named ${nickname} already exists` };
         if (accounts.some(a => a.plaid_account_id === plaidAccountId)) return { ok: false, error: "That bank account is already mapped" };
         accounts.push({
           nickname,
@@ -701,7 +726,8 @@ export const workerEntry = {
             payment_match: a.payment_match || builtinPaymentMatch(a.nickname) || null,
             token_preview: maskToken(a.plaid_access_token),
             has_token: !!a.plaid_access_token
-          }))
+          })),
+          config_version: await storedVersion(env, ...ACCOUNT_CONFIG_KEYS)
         });
       }
 

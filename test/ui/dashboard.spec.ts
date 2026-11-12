@@ -34,19 +34,16 @@ test("Resume syncing uses POST too", async ({ page }) => {
   expect(calls.filter(c => c.path === "/resume").map(c => c.method)).toEqual(["POST"]);
 });
 
-test("unsaved skip-rule edits survive switching tabs, and are flagged until saved", async ({ page }) => {
+test("unsaved skip-rule edits survive switching tabs and are what gets saved", async ({ page }) => {
   const calls = await open(page, "/dashboard");
   await page.click('[data-tab="rules"]');
   const contains = page.getByLabel("Bank text contains").first();
   await expect(contains).toHaveValue("ACME CORP PAYROLL");
-  await expect(page.locator("#rulesDirty")).toBeHidden();
   await contains.fill("ACME PAYROLL DIRECT DEP");
-  await expect(page.locator("#rulesDirty")).toBeVisible();
   await page.click('[data-tab="activity"]');
   await page.click('[data-tab="rules"]');
   await expect(page.getByLabel("Bank text contains").first()).toHaveValue("ACME PAYROLL DIRECT DEP");
   await page.getByRole("button", { name: "Save rules" }).click();
-  await expect(page.locator("#rulesDirty")).toBeHidden();
   const saved = calls.filter(c => c.method === "POST" && c.path === "/skip-rules").pop();
   expect(saved?.body.rules[0].contains).toBe("ACME PAYROLL DIRECT DEP");
 });
@@ -54,10 +51,8 @@ test("unsaved skip-rule edits survive switching tabs, and are flagged until save
 test("unsaved account settings survive switching tabs", async ({ page }) => {
   await open(page, "/dashboard");
   await page.click('[data-tab="settings"]');
-  await expect(page.locator("#accountsDirty")).toBeHidden();
   const ally = page.locator("[data-acct]").filter({ hasText: "Ally Savings" });
   await ally.getByLabel("Frequency").selectOption("15");
-  await expect(page.locator("#accountsDirty")).toBeVisible();
   await page.click('[data-tab="rules"]');
   await page.click('[data-tab="settings"]');
   await expect(page.locator("[data-acct]").filter({ hasText: "Ally Savings" }).getByLabel("Frequency")).toHaveValue("15");

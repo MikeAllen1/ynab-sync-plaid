@@ -21,12 +21,12 @@ test("dashboard buttons use POST for every POST-only route", () => {
   for (const m of page.matchAll(/api\("([^"?]+)[^"]*"([^;]*)/g)) {
     if (postOnly.has(m[1]) && !/method:\s*"POST"/.test(m[2])) problems.push(m[0].slice(0, 80));
   }
-  // Calls that pick their path at run time (on ? "/pause" : "/resume") are checked by
-  // line: every POST-only path named on an api(...) line needs method POST on that line.
-  for (const line of page.split("\n")) {
-    if (!line.includes("api(")) continue;
-    for (const m of line.matchAll(/"(\/[a-z\-\/]+)"/g)) {
-      if (postOnly.has(m[1]) && !/method:\s*"POST"/.test(line)) problems.push(line.trim().slice(0, 80));
+  // Paths chosen at run time (api(on ? "/pause" : "/resume")) escaped the check above,
+  // which is how the Pause button shipped sending GET. Check every quoted path inside
+  // any api(...) statement.
+  for (const m of page.matchAll(/api\(([^;]*)/g)) {
+    for (const p of m[1].matchAll(/"(\/[a-z\-\/]+)/g)) {
+      if (postOnly.has(p[1]) && !/method:\s*"POST"/.test(m[1])) problems.push(m[0].slice(0, 80));
     }
   }
   assert.deepEqual(problems, [], "dashboard calls a POST-only route without POST");

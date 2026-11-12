@@ -79,8 +79,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     details.adv summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 6px; }
     .btn.warning { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
     .btn.danger { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-border); }
-    .dirty { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--warn); }
-    .dirty[hidden], .sync-note[hidden] { display: none; }
+    .sync-note[hidden] { display: none; }
     .sync-note { display: block; margin-top: 4px; color: var(--warn); }
     .row-act { display: flex; width: max-content; margin-top: 6px; }
     .btn.small { min-height: 28px; padding: 0 10px; font-size: 12px; }
@@ -229,7 +228,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="rules" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addRule">+ Add rule</button>
-        <button class="btn primary" data-click="saveRules">Save rules</button><span id="rulesDirty" class="dirty" hidden>Unsaved changes</span>
+        <button class="btn primary" data-click="saveRules">Save rules</button>
       </div>
     </div>
     <div class="block">
@@ -238,7 +237,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="aliases" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addAlias">+ Add group</button>
-        <button class="btn primary" data-click="saveAliases">Save aliases</button><span id="aliasesDirty" class="dirty" hidden>Unsaved changes</span>
+        <button class="btn primary" data-click="saveAliases">Save aliases</button>
       </div>
     </div>
     <div class="block">
@@ -247,7 +246,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="tlabels" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addTLabel">+ Add label</button>
-        <button class="btn primary" data-click="saveTLabels">Save labels</button><span id="tlabelsDirty" class="dirty" hidden>Unsaved changes</span>
+        <button class="btn primary" data-click="saveTLabels">Save labels</button>
       </div>
     </div>
   </section>
@@ -273,7 +272,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <h2>Accounts</h2>
       <p class="hint">Turn syncing on or off, set how often each account syncs, and edit IDs. New banks are added from the setup page. Leave the token blank to keep the current one.</p>
       <div id="accounts" class="list"></div>
-      <div class="actions"><button class="btn primary" data-click="saveAccounts">Save accounts</button><span id="accountsDirty" class="dirty" hidden>Unsaved changes</span></div>
+      <div class="actions"><button class="btn primary" data-click="saveAccounts">Save accounts</button></div>
     </div>
   </section>
 
@@ -306,11 +305,6 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function safeCssClass(v, allowed) { return typeof v === "string" && allowed.indexOf(v) >= 0 ? v : ""; }
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
-// Edits waiting for Save, per section. A section with unsaved edits isn't reloaded when
-// you switch tabs (that used to throw the edits away), and leaving the page asks first.
-var dirty = { rules: false, aliases: false, tlabels: false, accounts: false };
-function setDirty(k, on) { dirty[k] = !!on; var el = document.getElementById(k + "Dirty"); if (el) el.hidden = !on; }
-window.addEventListener("beforeunload", function (ev) { if (Object.keys(dirty).some(function (k) { return dirty[k]; })) { ev.preventDefault(); ev.returnValue = ""; } });
 
 function $(id) { return document.getElementById(id); }
 function dry() { return $("dryRun").checked; }
@@ -335,16 +329,28 @@ function ago(iso) {
   var h = Math.floor(m / 60); return h + " hr" + (m % 60 ? " " + (m % 60) + " min" : "") + " ago";
 }
 
+var writesInFlight = 0;
 async function api(path, opts, raw) {
-  var resp = await fetch(path, Object.assign({}, opts || {}, { credentials: "same-origin", headers: Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {}) }));
-  var text = await resp.text();
+  var writes = !!(opts && opts.method && opts.method !== "GET");
+  var resp, text;
+  if (writes) writesInFlight++;
+  try {
+    resp = await fetch(path, Object.assign({}, opts || {}, { credentials: "same-origin", headers: Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {}) }));
+    text = await resp.text();
+  } catch (e) {
+    // No answer is not the same as "it failed": a change may have gone through and
+    // only the reply was lost. Say so, instead of a bare "Failed to fetch".
+    throw new Error(writes
+      ? "The connection dropped before the worker answered, so this may or may not have gone through. Reload the page to see the current state before trying again."
+      : "Couldn't reach the worker (" + e.message + "). Check your connection and try again.");
+  } finally { if (writes) writesInFlight--; }
   var data; try { data = JSON.parse(text); } catch (e) { data = text; }
   // Raw output only shows what you asked to see (Recovery actions and your own
   // actions), not the dashboard's background refreshes.
   if (raw !== false) $("output").textContent = when(new Date().toISOString()) + "  " + path + String.fromCharCode(10) + (typeof data === "string" ? data : JSON.stringify(data, null, 2));
   if (resp.status === 401) { sessionEnded(); throw new Error("Signed out: your admin session has ended. Enter the admin token under Settings, then try again. Nothing was changed."); }
   if (resp.status === 409 && data && data.busy) throw new Error(data.error);
-  if (!resp.ok) throw new Error((data && data.error) || ("HTTP " + resp.status));
+  if (!resp.ok) { var err = new Error((data && data.error) || ("HTTP " + resp.status)); err.stale = !!(data && data.stale); throw err; }
   return data;
 }
 function quiet(path) { return api(path, undefined, false); }
@@ -426,8 +432,8 @@ function openTab(name) {
   document.querySelectorAll(".tab").forEach(function (b) { var on = b.getAttribute("data-tab") === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
   document.querySelectorAll(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + name); });
   var tb = document.querySelector('.tab[data-tab="' + name + '"]'); if (tb) $("tabHint").textContent = tb.getAttribute("data-hint") || "";
-  if (name === "settings") { loadItems(false); if (!dirty.accounts) loadAccounts(); refreshGlobal(); }
-  if (name === "rules") { if (!dirty.rules) loadRules(); if (!dirty.aliases) loadAliases(); if (!dirty.tlabels) loadTLabels(); }
+  if (name === "settings") { loadItems(false); loadAccounts(); refreshGlobal(); }
+  if (name === "rules") { loadRules(); loadAliases(); loadTLabels(); }
   if (name === "recovery") loadStuck();
 }
 document.querySelectorAll(".tab").forEach(function (b) {
@@ -802,12 +808,17 @@ function renderAudit() {
 }
 
 // ---------- Reconcile ----------
+var reconSeq = 0;
 async function runReconcile(btn) {
   await busy(btn, async function () {
+  var seq = ++reconSeq;
   $("recon").innerHTML = '<div class="empty">Comparing…</div>';
   try {
     var q = "?days=" + $("reconDays").value + (selected() ? "&account=" + encodeURIComponent(selected()) : "");
     var d = await api("/reconcile" + q);
+    // The account choice changed while this was loading: these results are for the
+    // old choice, so don't show them under the new one.
+    if (seq !== reconSeq) return;
     var cell = function (x, c) {
       var v = x[c[1]];
       if (c[2]) return money(v);
@@ -853,7 +864,72 @@ function accountOptions(sel, withAll) {
   var opts = (withAll ? [["*", "All accounts"]] : []).concat(state.accounts.map(function (n) { return [n, pretty(n)]; }));
   return opts.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === sel ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("");
 }
-async function loadRules() { try { state.rules = (await quiet("/skip-rules")).rules || []; setDirty("rules", false); renderRules(); } catch (e) { attention([e.message], "bad"); } }
+// ---------- List editors (skip rules, payee aliases, transfer labels) ----------
+// Each list is saved whole. The page keeps the copy it last loaded or saved
+// (state.saved) and its version, so:
+// - deleting one entry saves the saved copy minus that entry, never your other,
+//   unsaved edits (deleting used to save every half-typed change on the page);
+// - a save made from a page that is out of date is refused instead of overwriting
+//   a change made in another tab or on another device;
+// - coming back to the Rules tab keeps unsaved edits instead of silently reloading.
+var EDITORS = {
+  rules: { path: "/skip-rules", field: "rules", noun: "rule", cap: "Rule", label: "Skip rules", render: function () { renderRules(); },
+    name: function (r) { return r.contains; },
+    invalid: function (r) { return String(r.contains || "").trim() ? "" : "needs Bank text contains"; } },
+  aliases: { path: "/payee-aliases", field: "aliases", noun: "alias group", cap: "Alias group", label: "Aliases", render: function () { renderAliases(); },
+    name: function (g) { return g.canonical; },
+    invalid: function (g) { return String(g.canonical || "").trim() && (g.patterns || []).length ? "" : "needs a merchant and at least one name"; } },
+  tlabels: { path: "/transfer-labels", field: "labels", noun: "transfer label", cap: "Transfer label", label: "Transfer labels", render: function () { renderTLabels(); },
+    name: function (l) { return l.label || l.tail; },
+    invalid: function (l) { return String(l.tail || "").replace(/[^0-9]/g, "").length >= 3 && String(l.label || "").trim() ? "" : "needs at least 3 digits and a payee name"; } }
+};
+state.saved = { rules: [], aliases: [], tlabels: [] }; state.versions = {};
+function adoptList(kind, list, version) {
+  state.saved[kind] = JSON.parse(JSON.stringify(list || []));
+  state.versions[kind] = version;
+  // _k: the entry's position in the saved list (absent for an entry not saved yet).
+  // Not enumerable, so it never goes to the server.
+  state[kind] = (list || []).map(function (x, i) { Object.defineProperty(x, "_k", { value: i, writable: true, enumerable: false }); return x; });
+}
+function listDirty(kind) { return JSON.stringify(state[kind] || []) !== JSON.stringify(state.saved[kind] || []); }
+async function loadList(kind, force) {
+  var E = EDITORS[kind];
+  if (!force && listDirty(kind)) { E.render(); return; }
+  try { var d = await quiet(E.path); adoptList(kind, d[E.field], d.version); E.render(); } catch (e) { attention([e.message], "bad"); }
+}
+async function saveList(kind, btn) {
+  var E = EDITORS[kind], bad = [];
+  state[kind].forEach(function (x, i) { var why = E.invalid(x); if (why) bad.push(E.cap + " " + (i + 1) + " " + why + "."); });
+  // An incomplete entry used to be dropped silently while the page said "saved".
+  if (bad.length) { attention(bad.concat(["Nothing was saved. Fill these in or delete them, then save again."]), "bad"); return; }
+  await busy(btn, async function () {
+    try {
+      var body = { expected_version: state.versions[kind] }; body[E.field] = state[kind];
+      var d = await api(E.path, { method: "POST", body: JSON.stringify(body) });
+      adoptList(kind, d[E.field], d.version); E.render(); attention([E.label + " saved."], "ok");
+    } catch (e) { attention(e.stale ? [e.message, "The latest saved version is shown now."] : [e.message], "bad"); if (e.stale) loadList(kind, true); }
+  });
+}
+async function deleteFromList(kind, i, btn) {
+  var E = EDITORS[kind], item = state[kind][i];
+  if (!item) return;
+  var savedEntry = item._k != null;
+  if (!confirm("Delete the " + E.noun + (E.name(item) ? ' "' + E.name(item) + '"' : "") + "?" + (savedEntry ? " This is saved immediately. Unsaved edits to the others are not saved." : ""))) return;
+  if (!savedEntry) { state[kind].splice(i, 1); E.render(); return; }
+  await busy(btn, async function () {
+    try {
+      var k = item._k;
+      var body = { expected_version: state.versions[kind] };
+      body[E.field] = state.saved[kind].filter(function (_, j) { return j !== k; });
+      var d = await api(E.path, { method: "POST", body: JSON.stringify(body) });
+      state[kind] = state[kind].filter(function (x) { return x !== item; });
+      state[kind].forEach(function (x) { if (x._k != null && x._k > k) x._k--; });
+      state.saved[kind] = JSON.parse(JSON.stringify(d[E.field] || [])); state.versions[kind] = d.version;
+      E.render(); attention([E.cap + " deleted."], "ok");
+    } catch (e) { attention(e.stale ? [e.message, "The latest saved version is shown now."] : [e.message], "bad"); if (e.stale) loadList(kind, true); }
+  });
+}
+function loadRules() { return loadList("rules"); }
 function renderRules() {
   $("rules").innerHTML = state.rules.length ? state.rules.map(function (r, i) {
     return '<div class="card item"><div class="grid2">' +
@@ -869,34 +945,18 @@ function renderRules() {
   $("rules").querySelectorAll("[data-r]").forEach(function (el) {
     el.addEventListener("input", function () {
       var r = state.rules[Number(el.getAttribute("data-r"))], f = el.getAttribute("data-f");
-      setDirty("rules", true);
       if (f === "enabled") r.enabled = el.checked;
       else if (f === "amounts") r.amounts = el.value.split(",").map(function (x) { return Number(x.trim()); }).filter(function (x) { return x > 0; });
       else r[f] = el.value;
     });
   });
 }
-// Delete saves right away. (It used to only remove the card on screen; switching tabs
-// reloaded the saved rules and the "deleted" one came back.)
-async function deleteRule(i) {
-  var r = state.rules[i];
-  if (!confirm("Delete the rule " + (r.contains ? '"' + r.contains + '"' : "") + "? This is saved immediately.")) return;
-  var next = state.rules.filter(function (_, j) { return j !== i; });
-  try {
-    state.rules = (await api("/skip-rules", { method: "POST", body: JSON.stringify({ rules: next }) })).rules;
-    setDirty("rules", false); renderRules(); attention(["Rule deleted."], "ok");
-  } catch (e) { attention([e.message], "bad"); }
-}
-function addRule() { state.rules.push({ id: "rule-" + Date.now(), enabled: true, account: state.accounts[0] || "*", contains: "", transaction_type: "inflow", reason: "Entered manually in YNAB" }); setDirty("rules", true); renderRules(); }
-async function saveRules() {
-  try { state.rules = (await api("/skip-rules", { method: "POST", body: JSON.stringify({ rules: state.rules }) })).rules; setDirty("rules", false); renderRules(); attention(["Skip rules saved."], "ok"); }
-  catch (e) { attention([e.message], "bad"); }
-}
+function addRule() { state.rules.push({ id: "rule-" + Date.now(), enabled: true, account: state.accounts[0] || "*", contains: "", transaction_type: "inflow", reason: "Entered manually in YNAB" }); renderRules(); }
 async function resetRules() {
   if (!confirm("Replace your rules with the built-in defaults?")) return;
   try { state.rules = (await api("/skip-rules/reset", { method: "POST" })).rules; renderRules(); } catch (e) { attention([e.message], "bad"); }
 }
-async function loadAliases() { try { state.aliases = (await quiet("/payee-aliases")).aliases || []; setDirty("aliases", false); renderAliases(); } catch (e) { attention([e.message], "bad"); } }
+function loadAliases() { return loadList("aliases"); }
 function renderAliases() {
   $("aliases").innerHTML = state.aliases.length ? state.aliases.map(function (g, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Merchant</span><input aria-label="Merchant" data-a="' + i + '" data-f="canonical" value="' + esc(g.canonical) + '" /></div>' +
@@ -906,27 +966,13 @@ function renderAliases() {
   $("aliases").querySelectorAll("[data-a]").forEach(function (el) {
     el.addEventListener("input", function () {
       var g = state.aliases[Number(el.getAttribute("data-a"))], f = el.getAttribute("data-f");
-      setDirty("aliases", true);
       g[f] = f === "patterns" ? el.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean) : el.value;
     });
   });
 }
-async function deleteAlias(i) {
-  var g = state.aliases[i];
-  if (!confirm("Remove the alias group " + (g.canonical ? '"' + g.canonical + '"' : "") + "? This is saved immediately.")) return;
-  var next = state.aliases.filter(function (_, j) { return j !== i; });
-  try {
-    state.aliases = (await api("/payee-aliases", { method: "POST", body: JSON.stringify({ aliases: next }) })).aliases;
-    setDirty("aliases", false); renderAliases(); attention(["Alias group removed."], "ok");
-  } catch (e) { attention([e.message], "bad"); }
-}
-function addAlias() { state.aliases.push({ canonical: "", patterns: [] }); setDirty("aliases", true); renderAliases(); }
-async function saveAliases() {
-  try { state.aliases = (await api("/payee-aliases", { method: "POST", body: JSON.stringify({ aliases: state.aliases }) })).aliases; setDirty("aliases", false); renderAliases(); attention(["Aliases saved."], "ok"); }
-  catch (e) { attention([e.message], "bad"); }
-}
+function addAlias() { state.aliases.push({ canonical: "", patterns: [] }); renderAliases(); }
 
-async function loadTLabels() { try { state.tlabels = (await quiet("/transfer-labels")).labels || []; setDirty("tlabels", false); renderTLabels(); } catch (e) { attention([e.message], "bad"); } }
+function loadTLabels() { return loadList("tlabels"); }
 function renderTLabels() {
   $("tlabels").innerHTML = state.tlabels.length ? state.tlabels.map(function (l, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Last digits</span><input aria-label="Last digits" inputmode="numeric" data-t="' + i + '" data-f="tail" value="' + esc(l.tail) + '" /></div>' +
@@ -934,15 +980,10 @@ function renderTLabels() {
       '<div class="actions"><button class="btn ghost" data-click="deleteTLabel" data-arg="' + i + '">Remove</button></div></div>';
   }).join("") : '<div class="empty">No labels.</div>';
   $("tlabels").querySelectorAll("[data-t]").forEach(function (el) {
-    el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; setDirty("tlabels", true); });
+    el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; });
   });
 }
-function addTLabel() { state.tlabels.push({ tail: "", label: "" }); setDirty("tlabels", true); renderTLabels(); }
-async function deleteTLabel(i) { state.tlabels = state.tlabels.filter(function (_, j) { return j !== i; }); await saveTLabels(); }
-async function saveTLabels() {
-  try { state.tlabels = (await api("/transfer-labels", { method: "POST", body: JSON.stringify({ labels: state.tlabels }) })).labels; setDirty("tlabels", false); renderTLabels(); attention(["Transfer labels saved."], "ok"); }
-  catch (e) { attention([e.message], "bad"); }
-}
+function addTLabel() { state.tlabels.push({ tail: "", label: "" }); renderTLabels(); }
 
 // ---------- Settings ----------
 async function refreshGlobal() {
@@ -955,14 +996,19 @@ async function refreshGlobal() {
     $("globalBtn").setAttribute("data-on", h.sync_enabled ? "1" : "0");
   } catch (e) { $("globalState").textContent = "unknown"; }
 }
-async function toggleGlobal() {
+async function toggleGlobal(btn) {
   var on = $("globalBtn").getAttribute("data-on") === "1";
   if (on && !confirm("Pause all syncing? Nothing imports until you resume.")) return;
-  try {
-    await api(on ? "/pause" : "/resume", { method: "POST" });
-    await refreshGlobal(); loadAll();
-    attention([on ? "All syncing is paused. Nothing is written to YNAB until you resume." : "Syncing resumed. Each account syncs on its next run."], on ? "warn" : "ok");
-  } catch (e) { attention([(on ? "Couldn't pause: " : "Couldn't resume: ") + e.message + " Nothing was changed."], "bad"); }
+  var result = null;
+  // /pause and /resume are POST-only on the server (this used to send a GET, so the
+  // button always failed with "POST only").
+  await busy(btn, async function () {
+    try { await api(on ? "/pause" : "/resume", { method: "POST" }); result = [[on ? "Syncing paused. Nothing imports until you resume." : "Syncing resumed."], on ? "warn" : "ok"]; }
+    catch (e) { result = [[e.message], "bad"]; }
+  });
+  // After busy() has put the button back, show what the server now says.
+  await refreshGlobal(); loadAll();
+  if (result) attention(result[0], result[1]);
 }
 async function saveToken() {
   var v = $("token").value.trim(); if (!v) return;
@@ -995,9 +1041,17 @@ async function loadItems(force) {
   } catch (e) { /* non-fatal */ }
 }
 
-async function loadAccounts() {
+async function loadAccounts(force) {
+  // Coming back to Settings keeps edits you haven't saved (it used to reload and
+  // drop them without a word).
+  if (state.acctDirty && !force) return;
   try {
-    var a = await quiet("/accounts"), s = await quiet("/account-settings");
+    var a, s, tries = 0;
+    // Two reads; if something was saved in between, read again so the version
+    // sent back with "Save accounts" matches what is on screen.
+    do { s = await quiet("/account-settings"); a = await quiet("/accounts"); } while (s.config_version !== a.config_version && ++tries < 3);
+    state.acctVersion = s.config_version === a.config_version ? a.config_version : undefined;
+    state.acctDirty = false;
     state.acctRows = a.accounts || [];
     state.settings = s.settings || [];
     $("accounts").innerHTML = state.acctRows.map(function (r, i) {
@@ -1025,15 +1079,13 @@ async function loadAccounts() {
         '<div class="full"><span class="field-label">Replace access token (leave blank to keep)</span><input aria-label="Replace access token (leave blank to keep)" type="password" data-f="plaid_access_token" autocomplete="off" /></div>' +
         "</div></details></div></div>";
     }).join("") || '<div class="empty">No accounts yet. <a href="/setup">Add a bank</a>.</div>';
-    setDirty("accounts", false);
     $("accounts").querySelectorAll('[data-f="sync_enabled"]').forEach(function (cb) {
       var was = cb.checked;
       cb.addEventListener("change", function () { cb.closest("div").querySelector(".sync-note").hidden = was || !cb.checked; });
     });
-    $("accounts").querySelectorAll("[data-f]").forEach(function (el) { el.addEventListener("input", function () { setDirty("accounts", true); }); el.addEventListener("change", function () { setDirty("accounts", true); }); });
   } catch (e) { $("accounts").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
-async function saveAccounts() {
+async function saveAccounts(btn) {
   var accounts = [], settings = [];
   document.querySelectorAll("[data-acct]").forEach(function (card) {
     var r = state.acctRows[Number(card.getAttribute("data-acct"))];
@@ -1051,13 +1103,26 @@ async function saveAccounts() {
   var byYnab = {}, shared = [];
   accounts.forEach(function (a) { if (!a.ynab_account_id) return; if (byYnab[a.ynab_account_id]) shared.push(pretty(byYnab[a.ynab_account_id]) + " and " + pretty(a.nickname)); else byYnab[a.ynab_account_id] = a.nickname; });
   if (shared.length && !confirm(shared.join("; ") + " feed the same YNAB account. Feeding one YNAB account from two bank accounts usually imports every transaction twice. Save anyway?")) return;
-  try {
-    await api("/accounts/save", { method: "POST", body: JSON.stringify({ accounts: accounts, settings: settings }) });
-    setDirty("accounts", false);
-    attention(["Accounts saved. Changes apply on the next sync."], "ok");
-    loadAccounts(); loadAll();
-  } catch (e) { attention([e.message], "bad"); }
+  await busy(btn, async function () {
+    try {
+      // expected_version: refuse to save over a change made elsewhere since this page
+      // loaded (a stale page used to drop a just-added account, or turn back on an
+      // account switched off on another device).
+      await api("/accounts/save", { method: "POST", body: JSON.stringify({ accounts: accounts, settings: settings, expected_version: state.acctVersion }) });
+      attention(["Accounts saved. Changes apply on the next sync."], "ok");
+      state.acctDirty = false; loadAccounts(true); loadAll();
+    } catch (e) {
+      attention(e.stale ? [e.message, "The latest saved settings are shown now."] : [e.message], "bad");
+      if (e.stale) { state.acctDirty = false; loadAccounts(true); }
+    }
+  });
 }
+$("accounts").addEventListener("input", function () { state.acctDirty = true; });
+$("accounts").addEventListener("change", function () { state.acctDirty = true; });
+// Leaving the page with unsaved edits, or while a change is still being sent, asks first.
+window.addEventListener("beforeunload", function (ev) {
+  if (writesInFlight > 0 || state.acctDirty || ["rules", "aliases", "tlabels"].some(listDirty)) { ev.preventDefault(); ev.returnValue = ""; }
+});
 
 // ---------- Start ----------
 (async function init() {
@@ -1068,7 +1133,12 @@ async function saveAccounts() {
     hashToken = new URLSearchParams(location.hash.slice(1)).get("token") || "";
     history.replaceState(null, "", location.pathname);
   }
-  $("accountSelect").addEventListener("change", function () { loadEvents(); $("traceOut").innerHTML = ""; scopeLabels(); });
+  $("accountSelect").addEventListener("change", function () {
+    loadEvents(); $("traceOut").innerHTML = "";
+    // The dry-run preview and reconcile results were for the previous choice.
+    reconSeq++; $("recon").innerHTML = ""; $("previewBlock").style.display = "none";
+    scopeLabels();
+  });
   updateDryNote();
   if (hashToken) {
     $("token").value = hashToken;
@@ -1096,16 +1166,16 @@ var CLICK = {
   runReconcile: function (el) { runReconcile(el); }, undo: function (el) { undo(el); },
   undoPreview: function (el) { undoPreview(el); }, undoCancel: function () { $("undoPick").innerHTML = ""; },
   tracePending: function (el) { tracePending(el); }, loadStuck: function (el) { loadStuck(el); },
-  addRule: function () { addRule(); }, saveRules: function () { saveRules(); },
-  addAlias: function () { addAlias(); }, saveAliases: function () { saveAliases(); },
-  addTLabel: function () { addTLabel(); }, saveTLabels: function () { saveTLabels(); },
-  toggleGlobal: function () { toggleGlobal(); }, saveToken: function () { saveToken(); }, clearToken: function () { clearToken(); },
-  saveAccounts: function () { saveAccounts(); }, loadItemsFresh: function () { loadItems(true); },
+  addRule: function () { addRule(); }, saveRules: function (el) { saveList("rules", el); },
+  addAlias: function () { addAlias(); }, saveAliases: function (el) { saveList("aliases", el); },
+  addTLabel: function () { addTLabel(); }, saveTLabels: function (el) { saveList("tlabels", el); },
+  toggleGlobal: function (el) { toggleGlobal(el); }, saveToken: function () { saveToken(); }, clearToken: function () { clearToken(); },
+  saveAccounts: function (el) { saveAccounts(el); }, loadItemsFresh: function () { loadItems(true); },
   show: function (el) { show(el.getAttribute("data-path"), el, el.getAttribute("data-method") || undefined); },
   showPlaidRaw: function () { needAccount(function (a) { show("/debug/plaid/raw?account=" + a + "&days=30&count=100"); }); },
   showYnabRegister: function () { needAccount(function (a) { show("/debug/ynab-register?account=" + a + "&days=30"); }); },
-  deleteRule: function (el, arg) { deleteRule(Number(arg)); }, deleteAlias: function (el, arg) { deleteAlias(Number(arg)); },
-  deleteTLabel: function (el, arg) { deleteTLabel(Number(arg)); }
+  deleteRule: function (el, arg) { deleteFromList("rules", Number(arg), el); }, deleteAlias: function (el, arg) { deleteFromList("aliases", Number(arg), el); },
+  deleteTLabel: function (el, arg) { deleteFromList("tlabels", Number(arg), el); }
 };
 document.addEventListener("click", function (ev) {
   var el = ev.target && ev.target.closest ? ev.target.closest("[data-click]") : null;

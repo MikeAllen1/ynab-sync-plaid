@@ -1,4 +1,5 @@
 import { health, readJson } from "./status";
+import { ALERT_TIMEOUT_MS, fetchWithTimeout } from "../util/http";
 import { getRecentRawTransactionsDetailed, lookbackDate, plaidItemCached } from "../plaid/fetch";
 import { getAuditedAccounts, isCreditCardAccount } from "../store/accounts";
 import { flushEventLog, getEventLog } from "../store/event-log";
@@ -331,14 +332,14 @@ export async function sendConnectionAlert(env: Env, broken: ItemHealth[]): Promi
     ? `⚠️ YNAB sync: ${broken[0].institution || broken[0].nicknames.join(", ")} ${needsReauth ? "needs reconnect" : "connection problem"}`
     : `⚠️ YNAB sync: ${broken.length} bank connections ${needsReauth ? "need attention" : "have problems"}`;
 
-  const resp = await fetch("https://api.resend.com/emails", {
+  const resp = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ from, to: [to], subject, text })
-  });
+  }, ALERT_TIMEOUT_MS);
   // Resend answers 4xx when it refuses (unverified sender, a recipient the onboarding
   // sender can't reach). Report that instead of pretending the email went out.
   if (!resp.ok) {

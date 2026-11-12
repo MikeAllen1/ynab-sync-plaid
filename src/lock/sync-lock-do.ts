@@ -1,5 +1,5 @@
 import { SYNC_LOCK_TTL_SECONDS } from "./lock";
-import { isDurableStateKey } from "../store/durable-state";
+import { LEGACY_MIGRATED_PREFIXES, isDurableStateKey } from "../store/durable-state";
 
 // One strongly-consistent Durable Object owns both the global financial-write
 // mutex and the small bounded diagnostic histories. KV read/modify/write is not
@@ -133,8 +133,16 @@ export class SyncLock {
     if (url.pathname.startsWith("/state/")) {
       const okKey = (k: unknown) => typeof k === "string" && k.length <= 512 && isDurableStateKey(k);
       const live = (v: any) => v && typeof v.value === "string" && (!v.expires_at || v.expires_at > now);
+      // Which key prefixes have had their KV values imported. The old single flag means
+      // "the original prefixes"; later prefixes are recorded one by one.
+      const migratedPrefixes = async (store: { get: (k: string) => Promise<any> }): Promise<string[]> => {
+        const list = await store.get("state_migrated_prefixes");
+        if (Array.isArray(list)) return list.filter((p: unknown) => typeof p === "string");
+        return (await store.get("state_migrated")) === true ? [...LEGACY_MIGRATED_PREFIXES] : [];
+      };
       if (url.pathname === "/state/migrated" && request.method === "GET") {
-        return Response.json({ migrated: (await this.state.storage.get("state_migrated")) === true });
+        const prefixes = await migratedPrefixes(this.state.storage);
+        return Response.json({ migrated: prefixes.length > 0, prefixes });
       }
       if (url.pathname === "/state/get" && request.method === "GET") {
         const key = url.searchParams.get("key") || "";
@@ -162,18 +170,29 @@ export class SyncLock {
       if (url.pathname === "/state/import" && request.method === "POST") {
         const entries = Array.isArray(body?.entries) ? body.entries : null;
         if (!entries || entries.length > 200) return Response.json({ error: "invalid state import" }, { status: 400 });
+        // Callers name the prefixes they are migrating; an older caller that doesn't is
+        // migrating the original set.
+        const asked: string[] = Array.isArray(body?.prefixes)
+          ? body.prefixes.filter((p: unknown) => typeof p === "string" && isDurableStateKey(p))
+          : [...LEGACY_MIGRATED_PREFIXES];
         const result = await this.state.storage.transaction(async txn => {
-          // Once migrated, the Durable Object is the only source: a late import from a
-          // slower isolate must not bring back values a run has since changed.
-          if ((await txn.get("state_migrated")) === true) return { imported: 0, already_migrated: true };
+          // Once a prefix is migrated, the Durable Object is its only source: a late import
+          // from a slower isolate must not bring back values a run has since changed.
+          const done = new Set(await migratedPrefixes(txn));
+          const open = asked.filter(p => !done.has(p));
+          if (open.length === 0) return { imported: 0, already_migrated: true };
           let imported = 0;
           for (const e of entries) {
             if (!Array.isArray(e) || !okKey(e[0]) || typeof e[1] !== "string") continue;
+            if (!open.some(p => e[0].startsWith(p))) continue;
             if ((await txn.get(`state:${e[0]}`)) !== undefined) continue;
             await txn.put(`state:${e[0]}`, { value: e[1], expires_at: null });
             imported++;
           }
-          if (body.mark_migrated === true) await txn.put("state_migrated", true);
+          if (body.mark_migrated === true) {
+            await txn.put("state_migrated_prefixes", [...done, ...open]);
+            await txn.put("state_migrated", true);
+          }
           return { imported, already_migrated: false };
         });
         return Response.json({ ok: true, ...result });

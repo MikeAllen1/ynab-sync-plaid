@@ -4,6 +4,7 @@ import { getAccounts } from "../store/accounts";
 import { VERIFY_WINDOW_DAYS } from "../sync/engine";
 import { AccountConfig, Env, PlaidTransaction, QuarantinedPlaidTxn, partitionPlaidTxns } from "../types";
 import { todayInTimeZone } from "../util/dates";
+import { hostTimeouts, outbound } from "../util/http";
 
 // ---------- Debug endpoints ----------
 
@@ -83,7 +84,7 @@ export async function debugPlaidRawTransactions(env: Env, url: URL): Promise<any
 // outside calls one run may make (50 on the Free plan). The cache is cleared at the
 // start of every run, so nothing carries over between runs.
 export let runCache = new Map<string, any>();
-export function resetRunCache(): void { runCache = new Map(); }
+export function resetRunCache(): void { runCache = new Map(); outbound.count = 0; hostTimeouts.clear(); }
 // One /item/get per bank login per run (a checking account and a card at the same bank share a login).
 export async function plaidItemCached(env: Env, accessToken: string): Promise<any> {
   const key = `plaid_item:${accessToken}`;

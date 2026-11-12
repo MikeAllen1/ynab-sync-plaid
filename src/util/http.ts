@@ -8,36 +8,102 @@ import { Env } from "../types";
 // + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
+export const OUTBOUND_TIMEOUT_MS = 30_000;
+// Alert emails and alert webhooks are best-effort and some run while the sync lock is held.
+export const ALERT_TIMEOUT_MS = 10_000;
+
+/** Mutable so tests can shorten it; production always uses OUTBOUND_TIMEOUT_MS. */
+export const timeouts = { requestMs: OUTBOUND_TIMEOUT_MS };
+
+export interface FetchRetryOptions {
+  retrySafe?: boolean;
+  beforeAttempt?: () => Promise<void>;
+  /** The calling operation's env: lease renewal then covers only that operation's lock. */
+  env?: Env;
+  /** Per-attempt timeout (ms). Defaults to OUTBOUND_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+// Outbound requests made by this invocation (reset with the run cache at every entry point).
+// Cloudflare's Free plan allows 50 outbound subrequests per invocation; the 51st fails
+// with "Too many subrequests". The sync spends this budget deliberately (see run.ts):
+// accounts that don't fit wait for the next cron tick instead of failing part-way.
+export const outbound = { count: 0 };
+export const DEFAULT_SUBREQUEST_BUDGET = 45;   // 50 on the Free plan, minus room for alerts
+export function subrequestBudget(env: Env): number {
+  const n = Number(env.SUBREQUEST_BUDGET);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SUBREQUEST_BUDGET;
+}
+
+// Hosts that timed out in this invocation (reset with the run cache). After two timeouts a
+// host is treated as down for the rest of the run, so a provider that has stopped
+// answering costs one run a couple of deadlines, not one deadline per call (which could
+// outlast the cron's 15-minute limit).
+export const hostTimeouts = new Map<string, number>();
+export const TIMEOUTS_BEFORE_HOST_SKIPPED = 2;
+
+/** fetch() with a deadline. A timeout rejects with a TimeoutError like any transport failure. */
+export async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = timeouts.requestMs): Promise<Response> {
+  const host = new URL(url).hostname;
+  if ((hostTimeouts.get(host) || 0) >= TIMEOUTS_BEFORE_HOST_SKIPPED) {
+    const e = new Error(`${host} isn't responding (timed out ${TIMEOUTS_BEFORE_HOST_SKIPPED} times this run); skipped until the next run`);
+    e.name = "TimeoutError";
+    throw e;
+  }
+  outbound.count++;
+  // A caller that brings its own signal owns cancellation; it is passed through untouched.
+  if (init.signal) return fetch(url, init);
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal });
+  } catch (error: any) {
+    if (signal.aborted) {
+      hostTimeouts.set(host, (hostTimeouts.get(host) || 0) + 1);
+      const e = new Error(`Request to ${host} timed out after ${+(timeoutMs / 1000).toFixed(1)}s`);
+      e.name = "TimeoutError";
+      throw e;
+    }
+    throw error;
+  }
+}
+
 export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   retries = 2,
-  options: { retrySafe?: boolean; beforeAttempt?: () => Promise<void> } | boolean = {}
+  options: FetchRetryOptions | boolean = {}
 ): Promise<Response> {
+  const owner = typeof options === "boolean" ? undefined : options.env;
+  const timeoutMs = typeof options === "boolean" ? timeouts.requestMs : options.timeoutMs ?? timeouts.requestMs;
   const method = String(init.method || "GET").toUpperCase();
   const safeToRetry = typeof options === "boolean"
     ? options
     : options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
-    await keepLeaseAlive();
+    await keepLeaseAlive(owner);
     if (typeof options !== "boolean" && options.beforeAttempt) await options.beforeAttempt();
     let resp: Response;
     try {
-      resp = await fetch(url, init);
+      // Bounded: a hung provider call would otherwise hold the sync lock until its lease
+      // expires. A timed-out write is an ambiguous transport error like any other (not
+      // replayed); stable import ids let the next run reconcile it.
+      resp = await fetchWithTimeout(url, init, timeoutMs);
     } catch (error) {
-      // A transport error after a mutation is ambiguous: the remote service may
-      // have committed it. Never replay writes unless the caller explicitly
+      // A transport error (or timeout) after a mutation is ambiguous: the remote service
+      // may have committed it. Never replay writes unless the caller explicitly
       // establishes that the operation is safe to repeat.
-      await keepLeaseAlive();
+      await keepLeaseAlive(owner);
       if (!safeToRetry || attempt >= retries) throw error;
+      // A host already given up on for this run isn't retried (that would only add waits).
+      if ((hostTimeouts.get(new URL(url).hostname) || 0) >= TIMEOUTS_BEFORE_HOST_SKIPPED) throw error;
       await sleep(Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250));
       attempt++;
       continue;
     }
     // Revalidate ownership before the caller can consume the response or issue
     // a subsequent financial mutation.
-    await keepLeaseAlive();
+    await keepLeaseAlive(owner);
     if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
       const backoffMs = retryAfterDelayMs(resp.headers.get("Retry-After"), attempt);
       // Do not shorten a provider-specified delay; defer to the next scheduled

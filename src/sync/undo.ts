@@ -142,6 +142,11 @@ export async function rollbackSync(env: Env, url: URL): Promise<any> {
     deletable.push(item);
   }
 
+  // Rows you've approved in YNAB since the sync added them (the worker always adds
+  // rows unapproved). Undo still removes them, but the preview says so first, since
+  // any category or memo you gave them goes with them.
+  const reviewed = deletable.filter(item => current.get(item.id)?.approved === true);
+
   if (url.searchParams.get("confirm") !== "true") {
     return {
       ok: true,
@@ -149,7 +154,8 @@ export async function rollbackSync(env: Env, url: URL): Promise<any> {
       target: { index: idx, ts: batch.ts, trigger: batch.trigger, count: batch.count },
       would_delete: deletable.slice(0, 100),
       would_keep: kept.slice(0, 100),
-      message: `This would delete ${deletable.length} of ${batch.count} transaction(s) created by the "${batch.trigger}" sync at ${batch.ts}${kept.length ? ` (${kept.length} kept: settled, reconciled or gone)` : ""}.\n\nPosted rows removed here won't be re-imported: YNAB remembers their import ids, and the worker treats them as deleted on purpose. A pending row removed here comes back once the charge posts.\n\nUndo only removes rows the sync added. Anything else that sync did stays as it is: rows it marked posted, pending rows it removed, and amounts or dates it updated.`,
+      would_delete_approved: reviewed.length,
+      message: `This would delete ${deletable.length} of ${batch.count} transaction(s) created by the "${batch.trigger}" sync at ${batch.ts}${kept.length ? ` (${kept.length} kept: settled, reconciled or gone)` : ""}.${reviewed.length ? `\n\n${reviewed.length} of them you've already approved in YNAB; the category and memo you gave them are deleted with them.` : ""}\n\nPosted rows removed here won't be re-imported: YNAB remembers their import ids, and the worker treats them as deleted on purpose. A pending row removed here comes back once the charge posts.\n\nUndo only removes rows the sync added. Anything else that sync did stays as it is: rows it marked posted, pending rows it removed, and amounts or dates it updated.`,
       reimport_note: "Posted rows removed by undo are not re-imported."
     };
   }
