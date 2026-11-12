@@ -18,7 +18,9 @@ Things it doesn't do, or does only partly. If one of these matters to you, an is
   itself within the hour.
 - **Charges older than ~120 days** aren't created, even if the bank replays them after a long outage, because
   they can't be checked against YNAB for a duplicate. They're listed on the dashboard for you to review.
-- **Foreign currency**: amounts are taken in the account's currency as Plaid reports them. YNAB budgets in
-  another currency aren't converted.
+- **One currency.** There's no currency conversion. A charge whose currency differs from your YNAB budget's
+  currency stops that account's sync with a "Currency mismatch" error rather than importing a wrong amount.
+  A bank row with no standard currency code (some Plaid rows only carry an unofficial code, such as crypto) or
+  with more decimal places than YNAB stores can't be imported either; add those by hand.
 - **Banks that need re-authorization** (every few months for some) stop syncing until you reconnect on
   `/setup`. Set up email alerts to hear about it.

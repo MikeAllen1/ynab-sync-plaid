@@ -126,9 +126,11 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 ## Security
 
 - Bank access tokens are stored in your Cloudflare KV, never in the code or repo.
-- Every endpoint that reads or changes data needs the admin token (`x-admin-token` header), compared
-  in constant time. Plaid webhooks are verified with Plaid's signed JWTs.
-- The dashboard and setup pages refuse to be framed.
+- Every endpoint that reads or changes data needs the admin token, compared in constant time. The dashboard
+  exchanges it once for a one-hour session held in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, so page
+  scripts never see it; scripts can send it in the `x-admin-token` header instead.
+- Plaid webhooks are verified with Plaid's signed JWTs.
+- The dashboard and setup pages refuse to be framed, and state-changing browser requests must be same-origin.
 
 ## Contributing and security
 
