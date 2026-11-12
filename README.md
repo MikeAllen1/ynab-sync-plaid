@@ -96,7 +96,7 @@ The short version:
    ```bash
    curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.<you>.workers.dev/configure-webhooks
    ```
-   Run it again after linking another bank.
+   Banks linked from `/setup` are registered automatically; this is only needed for banks linked before that, or if the worker's address changed.
 
 Start with **Dry run** ticked on the dashboard to see what a sync would do before it writes anything.
 

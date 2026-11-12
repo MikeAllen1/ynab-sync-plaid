@@ -105,9 +105,9 @@ check. On the dashboard, open **Recovery** and click **Re-register webhooks**. O
 curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.jane.workers.dev/configure-webhooks
 ```
 
-Scripts that call the worker's other actions work the same way: send `POST` with the `x-admin-token` header.
+Banks linked from `/setup` are registered automatically; this is only needed for banks linked before that, or if the worker's address changed.
 
-Run it again whenever you link another bank.
+Scripts that call the worker's other actions work the same way: send `POST` with the `x-admin-token` header.
 
 ## Tune it for your banks (optional)
 

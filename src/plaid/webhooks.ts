@@ -1,7 +1,7 @@
 import { runItemHealthCheck } from "../health/items";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "./client";
-import { getEnabledAccounts } from "../store/accounts";
+import { getAccounts, getEnabledAccounts } from "../store/accounts";
 import { markItemDue, syncAll } from "../sync/run";
 import { AccountConfig, Env } from "../types";
 import { friendlyErrorMessage } from "../util/errors";
@@ -386,7 +386,10 @@ export async function refreshBeforeManualSync(env: Env, onlyAccount?: string): P
 }
 
 export async function configurePlaidWebhooks(env: Env, origin: string): Promise<any> {
-  const accounts = await getEnabledAccounts(env);
+  // Every mapped bank login, not only those with sync on: a new account starts with
+  // sync off, and it should already be wired for webhooks when it's turned on. A
+  // webhook for an Item whose accounts are all off just finds nothing to sync.
+  const accounts = await getAccounts(env);
   const tokens = uniqueAccessTokens(accounts);
   const webhook = `${origin}/webhook`;
   const results: any[] = [];
