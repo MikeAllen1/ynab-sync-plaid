@@ -17,6 +17,7 @@ test("matching configuration writes require the global Durable Object lock", asy
       delete: async (key: string) => { writes.push("delete:" + key); }
     }
   } as unknown as Env;
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue(env))}`;
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
   const cases = [
     ["/skip-rules", { rules: [] }],
