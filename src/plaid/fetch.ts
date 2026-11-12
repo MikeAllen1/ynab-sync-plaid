@@ -143,21 +143,23 @@ export async function fetchRawWindow(
       if (page.some((t: any) => t?.account_id !== acct.plaid_account_id)) {
         throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
       }
-      if (total >= 0 && plaid.total_transactions !== total) stable = false;
+      if (total >= 0 && plaid.total_transactions !== total) throw new Error("Plaid /transactions/get total_transactions changed during pagination.");
       total = plaid.total_transactions;
-      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" ||
+      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" || !t.transaction_id ||
           typeof t.account_id !== "string" || typeof t.date !== "string" ||
-          typeof t.amount !== "number" || !Number.isFinite(t.amount))) stable = false;
-      if (page.length === 0 && offset < total) { stable = false; break; }
-      if (page.length > pageSize || offset + page.length > total) { stable = false; break; }
+          typeof t.amount !== "number" || !Number.isFinite(t.amount) || typeof t.pending !== "boolean")) {
+        throw new Error("Plaid /transactions/get returned a malformed transaction.");
+      }
+      if (page.length === 0 && offset < total) throw new Error("Plaid /transactions/get returned an empty page before total_transactions was reached.");
+      if (page.length > pageSize || offset + page.length > total) throw new Error("Plaid /transactions/get returned an invalid page size or offset.");
       for (const transaction of page) {
-        if (seenIds.has(transaction.transaction_id)) stable = false;
+        if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages.");
         seenIds.add(transaction.transaction_id);
       }
       rows.push(...page);
       offset += page.length;
       if (page.length === 0) break;
-      if (offset < total && page.length !== pageSize) { stable = false; break; }
+      if (offset < total && page.length !== pageSize) throw new Error("Plaid /transactions/get returned a short page before total_transactions was reached.");
     }
     if (total < 0 || rows.length !== Math.min(total, MAX_TRANSACTIONS)) stable = false;
     return { rows, total: Math.max(0, total), stable };
