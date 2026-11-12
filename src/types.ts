@@ -28,6 +28,8 @@ export interface Env {
   // Optional. "off" stops asking Plaid to re-check banks (/transactions/refresh), which
   // paid Plaid plans bill per call. Default: on.
   PLAID_REFRESH?: string;
+  // Optional. Set to "true" only when transaction-level diagnostic output is needed.
+  ENABLE_SENSITIVE_DIAGNOSTICS?: string;
 }
 
 export interface AccountConfig {
