@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { ynabDeleteTransaction, ynabUpdateEach, ynabUpdateTransactions, ynabUpsert } from "../src/ynab/client";
 import type { Env } from "../src/types";
 
-const env = { YNAB_TOKEN: "test-token", YNAB_BUDGET_ID: "test-budget" } as Env;
+const env = { YNAB_TOKEN: "test-token", YNAB_BUDGET_ID: "test-budget", SYNC_LOCK: { idFromName: () => "test", get: () => ({ fetch: async () => Response.json({ reserved: true }) }) } } as Env;
 
 test("a refused YNAB update batch is retried per row and reports only the failed row", async () => {
   const originalFetch = globalThis.fetch;
