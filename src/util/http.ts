@@ -9,6 +9,8 @@ import { Env } from "../types";
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
 export const OUTBOUND_TIMEOUT_MS = 30_000;
+// Alert emails and alert webhooks are best-effort and some run while the sync lock is held.
+export const ALERT_TIMEOUT_MS = 10_000;
 
 export async function fetchWithRetry(
   url: string,

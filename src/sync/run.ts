@@ -1,4 +1,5 @@
 import { runAccountAudit } from "../audit/audit";
+import { ALERT_TIMEOUT_MS } from "../util/http";
 import { AUDIT_DAYS, AUDIT_MIN_INTERVAL_MINUTES, DEFAULT_SYNC_FREQUENCY_MINUTES, STALE_PENDING_DAYS, WORKER_VERSION } from "../constants";
 import { getItemHealth } from "../health/items";
 import { prettyNickname, readJson } from "../health/status";
@@ -376,6 +377,7 @@ async function sendChannelAlert(
       : `Your YNAB sync is working again.${currentState === "warning" ? " The dashboard has a warning to look at." : ""}\n${origin}/dashboard`;
     try {
       const resp = await fetch("https://api.resend.com/emails", {
+        signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
         method: "POST", headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from: env.ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>", to: [to], subject, text })
       });
@@ -411,6 +413,7 @@ async function sendChannelAlert(
     // Keys cover the common targets: Slack ("text"), Discord ("content"), and a
     // generic "message". Point ALERT_WEBHOOK_URL at whatever you use.
     const resp = await fetch(env.ALERT_WEBHOOK_URL!, {
+        signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

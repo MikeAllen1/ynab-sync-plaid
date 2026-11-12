@@ -13,9 +13,12 @@ import { json } from "../util/http";
 // run unprotected; cron retries in 15 minutes. KV get-then-put is not atomic and
 // must never be used as a mutex for financial writes.
 export const SYNC_LOCK_KEY = "sync:lock";
-// Longer than any realistic run (three accounts, capped retries). Runs renew the
-// lease between accounts, so a slow run keeps its lock.
-export const SYNC_LOCK_TTL_SECONDS = 900;
+// Runs renew the lease between accounts and around every outbound call (at most once
+// a minute), and every outbound call is capped at OUTBOUND_TIMEOUT_MS, so a live run
+// renews well within this. Kept short because a run Cloudflare cancels (a webhook sync
+// past waitUntil's 30 seconds) never reaches its release: until the lease runs out,
+// every sync, Sync now and dashboard change answers "busy". Was 900 s.
+export const SYNC_LOCK_TTL_SECONDS = 180;
 export const SYNC_LOCK_DO_ID = "global";
 
 export interface LockHandle { id: string; mode: "durable-object" | "kv-best-effort"; }
