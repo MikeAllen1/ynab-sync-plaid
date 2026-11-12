@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { syncAccountEngine } from "../src/sync/engine";
 import { resetRunCache } from "../src/plaid/fetch";
 import type { Env } from "../src/types";
+import { makeSyncLockNamespace } from "./helpers/sync-lock";
 
 test("a posted ownership-map persistence failure is recovered without losing or duplicating the YNAB row", async () => {
   const account = {
@@ -20,6 +21,7 @@ test("a posted ownership-map persistence failure is recovered without losing or 
   let failPostedPersist = true;
   const originalFetch = globalThis.fetch;
   const env = {
+    SYNC_LOCK: makeSyncLockNamespace(),
     ACCOUNT_MAP: JSON.stringify([account]),
     PLAID_ENV: "production",
     PLAID_CLIENT_ID: "plaid-client",
