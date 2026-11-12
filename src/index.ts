@@ -36,7 +36,7 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
@@ -433,16 +433,20 @@ export const workerEntry = {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      await env.SYNC_STATE.put("sync:enabled", "false");
-      return json({ ok: true, sync_enabled: false });
+      return lockedJson(env, async () => {
+        await env.SYNC_STATE.put("sync:enabled", "false");
+        return { ok: true, sync_enabled: false };
+      });
     }
 
     if (url.pathname === "/resume") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      await env.SYNC_STATE.put("sync:enabled", "true");
-      return json({ ok: true, sync_enabled: true });
+      return lockedJson(env, async () => {
+        await env.SYNC_STATE.put("sync:enabled", "true");
+        return { ok: true, sync_enabled: true };
+      });
     }
 
     // NEW: Plaid Link token creation (for setup page)
@@ -498,9 +502,8 @@ export const workerEntry = {
       if (!Array.isArray(body.accounts) || !Array.isArray(body.settings)) return json({ ok: false, error: "Body must be { accounts: [...], settings: [...] }" }, 400);
       if (body.accounts.length === 0) return json({ ok: false, error: "Refusing to save an empty account list (did the list fail to load?). Nothing was changed." }, 400);
       return lockedJson(env, async () => {
-        const accounts = await saveAccountsMerged(env, body.accounts);
-        const settings = await putAccountAutomationSettings(env, body.settings);
-        return { ok: true, saved: accounts.length, settings };
+        const saved = await saveAccountConfiguration(env, body.accounts, body.settings);
+        return { ok: true, saved: saved.accounts.length, settings: saved.settings };
       });
     }
 
@@ -606,8 +609,7 @@ export const workerEntry = {
           // A card's own last 4 is how checking-side payments usually name it.
           payment_match: body.is_credit_card ? cleanPaymentMatch({ last4: [String(body.mask || "")], words: [] }) : undefined
         });
-        await putAccounts(env, accounts);
-        await putAccountAutomationSettings(env, [{ nickname, sync_enabled: false }]);
+        await saveAccountConfiguration(env, accounts, [{ nickname, sync_enabled: false }]);
         return { ok: true, added: nickname, note: "Added with sync OFF. Set its YNAB starting balance to the bank's posted balance, then turn its sync on in the dashboard (Settings)." };
       });
     }
