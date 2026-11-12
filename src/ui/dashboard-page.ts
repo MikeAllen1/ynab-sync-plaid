@@ -1019,7 +1019,7 @@ document.addEventListener("click", function (event) {
   return new Response(securedHtml, {
     headers: {
       "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
-      "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "'; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-attr 'none'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; font-src 'self' data:"
+      "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "'; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-attr 'none'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; font-src 'self' data:"
     }
   });
 }
