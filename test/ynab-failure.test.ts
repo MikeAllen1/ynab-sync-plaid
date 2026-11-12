@@ -118,21 +118,29 @@ test("ambiguous YNAB delete is safely retried after confirming the row is gone",
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("partially committed YNAB update batch converges when individual rows are replayed", async () => {
+test("partially committed YNAB update batch is read back and only unresolved rows are patched", async () => {
   const originalFetch = globalThis.fetch;
   const rows = new Map([
     ["row-a", { id: "row-a", cleared: "uncleared" }],
     ["row-b", { id: "row-b", cleared: "uncleared" }]
   ]);
   let batchCalls = 0;
-  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body || "{}"));
-    const updates = body.transactions || [];
+  let singleCalls = 0;
+  let getCalls = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (init?.method === "GET") {
+      getCalls++;
+      const id = url.pathname.split("/").pop()!;
+      return Response.json({ data: { transaction: rows.get(id) } });
+    }
+    const updates = JSON.parse(String(init?.body || "{}")).transactions || [];
     if (updates.length > 1) {
       batchCalls++;
       rows.set(updates[0].id, { ...rows.get(updates[0].id)!, ...updates[0] });
       return Response.json({ error: { detail: "gateway failed after partial batch commit" } }, { status: 503 });
     }
+    singleCalls++;
     rows.set(updates[0].id, { ...rows.get(updates[0].id)!, ...updates[0] });
     return Response.json({ data: { transaction_ids: [updates[0].id] } });
   };
@@ -142,6 +150,8 @@ test("partially committed YNAB update batch converges when individual rows are r
       { id: "row-b", cleared: "cleared" }
     ]);
     assert.equal(batchCalls, 1);
+    assert.equal(getCalls, 2);
+    assert.equal(singleCalls, 1);
     assert.equal(result.updated, 2);
     assert.deepEqual(result.failed, []);
     assert.equal(rows.get("row-a")?.cleared, "cleared");
@@ -149,22 +159,28 @@ test("partially committed YNAB update batch converges when individual rows are r
   } finally { globalThis.fetch = originalFetch; }
 });
 
-
-test("a YNAB update committed before a lost response is safe to retry per row", async () => {
+test("a YNAB update committed before a lost response is recovered by read-back without replay", async () => {
   const originalFetch = globalThis.fetch;
   const rows = new Map([
     ["row-a", { id: "row-a", cleared: "uncleared" }],
     ["row-b", { id: "row-b", cleared: "uncleared" }]
   ]);
-  let calls = 0;
-  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls++;
+  let patchCalls = 0;
+  let getCalls = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (init?.method === "GET") {
+      getCalls++;
+      const id = url.pathname.split("/").pop()!;
+      return Response.json({ data: { transaction: rows.get(id) } });
+    }
+    patchCalls++;
     const body = JSON.parse(String(init?.body || "{}"));
     for (const patch of body.transactions || []) {
       const row = rows.get(patch.id);
       if (row) Object.assign(row, patch);
     }
-    if (calls === 1) throw new Error("connection reset after YNAB committed the batch");
+    if (patchCalls === 1) throw new Error("connection reset after YNAB committed the batch");
     return Response.json({ data: { transaction_ids: (body.transactions || []).map((x: any) => x.id) } });
   };
   try {
@@ -176,7 +192,8 @@ test("a YNAB update committed before a lost response is safe to retry per row", 
     assert.deepEqual(result.failed, []);
     assert.equal(rows.get("row-a")?.cleared, "cleared");
     assert.equal(rows.get("row-b")?.cleared, "cleared");
-    assert.equal(calls, 3, "the ambiguous batch is retried as two idempotent single-row updates");
+    assert.equal(patchCalls, 1);
+    assert.equal(getCalls, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
