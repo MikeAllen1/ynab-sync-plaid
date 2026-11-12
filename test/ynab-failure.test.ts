@@ -119,45 +119,65 @@ test("ambiguous YNAB delete is safely retried after confirming the row is gone",
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("ambiguous partially committed YNAB update batch is not replayed automatically", async () => {
+test("ambiguous partially committed YNAB update batch reads back state and patches only the unresolved row", async () => {
   const originalFetch = globalThis.fetch;
   const rows = new Map([
     ["row-a", { id: "row-a", cleared: "uncleared" }],
     ["row-b", { id: "row-b", cleared: "uncleared" }]
   ]);
-  let calls = 0;
-  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls++;
-    const body = JSON.parse(String(init?.body || "{}"));
-    const updates = body.transactions || [];
-    rows.set(updates[0].id, { ...rows.get(updates[0].id)!, ...updates[0] });
-    return Response.json({ error: { detail: "gateway failed after partial batch commit" } }, { status: 503 });
+  let patchCalls = 0;
+  let readCalls = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if ((init?.method || "GET") === "GET") {
+      readCalls++;
+      const id = url.pathname.split("/").pop()!;
+      return Response.json({ data: { transaction: rows.get(id) } });
+    }
+    patchCalls++;
+    const updates = JSON.parse(String(init?.body || "{}")).transactions || [];
+    if (updates.length > 1) {
+      const row = rows.get("row-a")!;
+      Object.assign(row, updates.find((x: any) => x.id === "row-a"));
+      return Response.json({ error: { detail: "gateway failed after partial batch commit" } }, { status: 503 });
+    }
+    Object.assign(rows.get(updates[0].id)!, updates[0]);
+    return Response.json({ data: { transaction_ids: [updates[0].id] } });
   };
   try {
-    await assert.rejects(ynabUpdateEach(env, [
+    const result = await ynabUpdateEach(env, [
       { id: "row-a", cleared: "cleared" },
       { id: "row-b", cleared: "cleared" }
-    ]), /YNAB update failed: 503/);
-    assert.equal(calls, 1, "ambiguous batch outcome must not trigger row-by-row replay");
+    ]);
+    assert.deepEqual(result, { updated: 2, failed: [] });
+    assert.equal(patchCalls, 2, "one ambiguous batch and one unresolved-row PATCH");
+    assert.equal(readCalls, 2, "both rows are checked before another write");
     assert.equal(rows.get("row-a")?.cleared, "cleared");
-    assert.equal(rows.get("row-b")?.cleared, "uncleared");
+    assert.equal(rows.get("row-b")?.cleared, "cleared");
   } finally { globalThis.fetch = originalFetch; }
 });
 
 
-test("ambiguous YNAB update is surfaced for state reconciliation, not automatically replayed", async () => {
+test("ambiguous YNAB update committed before a lost response is recovered by read-back without replay", async () => {
   const originalFetch = globalThis.fetch;
   const row = { id: "existing-row", cleared: "uncleared" };
-  let calls = 0;
-  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls++;
-    const body = JSON.parse(String(init?.body || "{}"));
-    Object.assign(row, body.transactions?.[0] || {});
+  let patchCalls = 0;
+  let readCalls = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if ((init?.method || "GET") === "GET") {
+      readCalls++;
+      return Response.json({ data: { transaction: row } });
+    }
+    patchCalls++;
+    Object.assign(row, JSON.parse(String(init?.body || "{}")).transactions?.[0] || {});
     throw new Error("connection reset after YNAB committed the batch");
   };
   try {
-    await assert.rejects(ynabUpdateEach(env, [{ id: "existing-row", cleared: "cleared" }]), /connection reset/);
-    assert.equal(row.cleared, "cleared", "the remote mutation may have committed");
-    assert.equal(calls, 1, "the client must not blindly replay an ambiguous PATCH");
+    const result = await ynabUpdateEach(env, [{ id: "existing-row", cleared: "cleared" }]);
+    assert.deepEqual(result, { updated: 1, failed: [] });
+    assert.equal(row.cleared, "cleared", "the remote mutation committed");
+    assert.equal(patchCalls, 1, "the ambiguous PATCH is never replayed");
+    assert.equal(readCalls, 1, "the committed row is confirmed by read-back");
   } finally { globalThis.fetch = originalFetch; }
 });
