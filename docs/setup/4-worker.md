@@ -86,11 +86,13 @@ From then on it runs by itself.
 ## Faster updates (optional)
 
 Plaid can tell the worker the moment a bank has something new (a webhook) instead of waiting for the next
-check:
+check. On the dashboard, open **Recovery** and click **Re-register webhooks**. Or from a terminal:
 
 ```bash
-curl -H "x-admin-token: <your admin token>" https://ynab-sync.jane.workers.dev/configure-webhooks
+curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.jane.workers.dev/configure-webhooks
 ```
+
+Scripts that call the worker's other actions work the same way: send `POST` with the `x-admin-token` header.
 
 Run it again whenever you link another bank.
 

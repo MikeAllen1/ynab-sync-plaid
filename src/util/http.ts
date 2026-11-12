@@ -126,11 +126,26 @@ export async function requireAdmin(req: Request, env: Env): Promise<Response | n
     return json({ error: "ADMIN_TOKEN is not configured. Run: npx wrangler secret put ADMIN_TOKEN" }, 500);
   }
 
-  if (!cookieValid && (!headerToken || !constantTimeEqual(headerToken, env.ADMIN_TOKEN))) {
+  // A request that presents a header token is judged by that header alone. Header
+  // requests are exempt from the browser Origin check, so they must never be
+  // rescued by an ambient cookie.
+  if (headerToken !== null) {
+    if (!constantTimeEqual(headerToken, env.ADMIN_TOKEN)) {
+      return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
+    }
+    return null;
+  }
+
+  if (!cookieValid) {
     return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
   }
 
   return null;
+}
+
+/** True when the request authenticates with the x-admin-token header rather than a cookie. */
+export function isHeaderAuthenticated(req: Request): boolean {
+  return req.headers.get("x-admin-token") !== null;
 }
 
 // Constant-time string comparison: avoids leaking how many leading characters

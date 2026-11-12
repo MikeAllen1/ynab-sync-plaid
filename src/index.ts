@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, isHeaderAuthenticated, json, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -205,7 +205,13 @@ export const workerEntry = {
     // exact same-origin Origin on every state-changing API request so a hostile
     // sibling subdomain or cross-site form cannot ride the cookie. Plaid's signed
     // webhook is intentionally handled above and is exempt from this browser check.
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.headers.get("Origin") !== url.origin) {
+    //
+    // A request that carries the x-admin-token header is not riding an ambient
+    // credential: a browser can only attach a custom header cross-origin after a
+    // CORS preflight, which this worker never approves. Scripts and curl send no
+    // Origin, so header-authenticated requests are exempt. requireAdmin then checks
+    // the header itself and never falls back to the cookie when a header is present.
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !isHeaderAuthenticated(req) && req.headers.get("Origin") !== url.origin) {
       return json({ ok: false, error: "same-origin request required" }, 403);
     }
 

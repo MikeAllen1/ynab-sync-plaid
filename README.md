@@ -89,9 +89,10 @@ The short version:
    (reconcile it). Then open `/dashboard`, go to **Settings** and turn the account's sync on. The first
    run picks up from there (currently-pending charges included).
 
-8. **Webhooks** (optional, makes new charges appear within minutes instead of on the next cron):
+8. **Webhooks** (optional, makes new charges appear within minutes instead of on the next cron): on the
+   dashboard, open **Recovery** and click **Re-register webhooks**. Or from a terminal:
    ```bash
-   curl -H "x-admin-token: <your admin token>" https://ynab-sync.<you>.workers.dev/configure-webhooks
+   curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.<you>.workers.dev/configure-webhooks
    ```
    Run it again after linking another bank.
 
