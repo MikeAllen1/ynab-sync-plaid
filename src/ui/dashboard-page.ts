@@ -313,9 +313,9 @@ async function api(path, opts, raw) {
   return data;
 }
 function quiet(path) { return api(path, undefined, false); }
-async function show(path, btn) {
+async function show(path, btn, method) {
   await busy(btn, async function () {
-    try { await api(path); openTab("recovery"); flash(["Done. The result is under Raw output."], "ok"); } catch (e) { flash([e.message], "bad"); }
+    try { await api(path, method ? { method: method } : undefined); openTab("recovery"); flash(["Done. The result is under Raw output."], "ok"); } catch (e) { flash([e.message], "bad"); }
   });
 }
 function needAccount(fn) { var a = selected(); if (!a) { alert("Pick an account in the toolbar first."); return; } fn(encodeURIComponent(a)); }
@@ -972,7 +972,7 @@ document.addEventListener("click", function (event) {
     case "check-items": loadItems(true); break;
     case "save-accounts": saveAccounts(); break;
     case "undo": undo(target); break;
-    case "show-path": show(target.getAttribute("data-path"), target); break;
+    case "show-path": show(target.getAttribute("data-path"), target, "POST"); break;
     case "show-account-path":
       needAccount(function (account) { show(target.getAttribute("data-path").replace("{account}", account), target); });
       break;
