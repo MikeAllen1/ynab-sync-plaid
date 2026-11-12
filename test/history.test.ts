@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { SyncLock } from "../src/lock/sync-lock-do";
 import { flushEventLog, getEventLog, LogEvent } from "../src/store/event-log";
 import { appendWebhookHistory, getWebhookHistory } from "../src/plaid/webhooks";
+import { appendUndo, getUndoLog } from "../src/sync/undo";
+import { dropLease, holdLease, keepLeaseAlive } from "../src/lock/lock";
 import type { Env } from "../src/types";
 
 function makeEnv(seed: Record<string, string> = {}) {
@@ -100,4 +102,84 @@ test("concurrent lock acquisitions are serialized by a storage transaction", asy
   assert.equal(wrongRelease.released, false);
   const release = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(holder)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
   assert.equal(release.released, true);
+});
+
+test("concurrent undo appends preserve every created row and group by run id", async () => {
+  const { env } = makeEnv();
+  await Promise.all([
+    appendUndo(env, "run-1", "cron", [{ id: "row-a", account: "checking" }]),
+    appendUndo(env, "run-1", "cron", [{ id: "row-b", account: "savings" }]),
+    appendUndo(env, "run-2", "manual", [{ id: "row-c", account: "checking" }])
+  ]);
+  const log = await getUndoLog(env);
+  assert.equal(log.length, 2, "same-run rows should be grouped in one undo batch");
+  const run1 = log.find(batch => batch.run_id === "run-1");
+  assert.deepEqual(new Set(run1?.items.map(item => item.id)), new Set(["row-a", "row-b"]));
+  assert.equal(run1?.count, 2);
+  assert.ok(log.some(batch => batch.run_id === "run-2"));
+});
+
+test("undo history supports transactional replacement after an undo operation", async () => {
+  const { env } = makeEnv();
+  await appendUndo(env, "run-1", "manual", [{ id: "row-a", account: "checking" }]);
+  const stub = env.SYNC_LOCK!.get(env.SYNC_LOCK!.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/history/replace", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "undo_log", items: [] })
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await getUndoLog(env), []);
+});
+
+
+test("an expired lock can be replaced, but the stale owner cannot renew or release the new lease", async () => {
+  const { env } = makeEnv();
+  const stub = env.SYNC_LOCK!.get(env.SYNC_LOCK!.idFromName("global"));
+  const originalNow = Date.now;
+  let now = 1_800_000_000_000;
+  Date.now = () => now;
+  try {
+    const first = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(first.acquired, true);
+    holdLease(env, { id: first.id, mode: "durable-object" });
+
+    now += 901_000;
+    const second = await stub.fetch("https://sync-lock/acquire", { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(second.acquired, true);
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.stole_expired, true);
+    await assert.rejects(keepLeaseAlive(), /SYNC_LOCK lease is no longer owned by this run/);
+    dropLease({ id: first.id, mode: "durable-object" });
+
+    const staleRenew = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(first.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(staleRenew.renewed, false);
+    const staleRelease = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(first.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(staleRelease.released, false);
+
+    const currentRenew = await stub.fetch(`https://sync-lock/renew?id=${encodeURIComponent(second.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(currentRenew.renewed, true);
+    const currentRelease = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(second.id)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
+    assert.equal(currentRelease.released, true);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("unreadable legacy undo history fails closed instead of reporting nothing to undo", async () => {
+  const { env } = makeEnv({ undo_log: "{broken" });
+  // Force the Durable Object read path to fail so the legacy fallback is exercised.
+  env.SYNC_LOCK = {
+    idFromName: () => "global",
+    get: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) })
+  } as any;
+  await assert.rejects(() => getUndoLog(env), /UNDO_LOG_UNREADABLE/);
+});
+
+test("malformed legacy undo entries fail closed", async () => {
+  const { env } = makeEnv({ undo_log: JSON.stringify([{ ts: "2026-01-01", items: [{ id: "x" }] }]) });
+  env.SYNC_LOCK = {
+    idFromName: () => "global",
+    get: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) })
+  } as any;
+  await assert.rejects(() => getUndoLog(env), /UNDO_LOG_UNREADABLE/);
 });

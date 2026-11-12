@@ -213,11 +213,12 @@ export function resolveCardForPayment(
   if (matches.length > 1) {
     const byWords = matches.filter(a => { const r = paymentMatchFor(a)!; return paymentTextMatches(t, [], r.words); });
     if (byWords.length === 1) return byWords[0];
-    // Several cards named by number or by words alike: an account reference
-    // ("ending in 1234") decides; otherwise the first, as before.
+    // Multiple matching cards without a unique word or account-reference match
+    // are ambiguous. Never route a payment to whichever account happens to appear
+    // first in configuration.
     const refs = new Set(accountRefsIn(t));
     const byRef = matches.filter(a => (paymentMatchFor(a)!.last4 || []).some(l => refs.has(l)));
-    return byRef.length === 1 ? byRef[0] : matches[0];
+    return byRef.length === 1 ? byRef[0] : null;
   }
   // No card named directly ("CHASE CREDIT CRD EPAY" carries no last 4): if the text
   // names the issuer and exactly one mapped card is from that issuer, it's that card.

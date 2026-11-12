@@ -3,7 +3,7 @@ import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DA
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
-import { getRecentRawTransactionsDetailed, lookbackDate, toIsoDate } from "../plaid/fetch";
+import { getRecentRawTransactionsDetailed, lookbackDate, shiftCalendarDate, toIsoDate } from "../plaid/fetch";
 import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
@@ -14,7 +14,7 @@ import { appendUndo, getUndoLog } from "./undo";
 import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
-import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabUpdateEach, ynabUpsert } from "../ynab/client";
+import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabGetPlanCurrency, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
 
 // ================= SYNC ENGINE (identity-first, shared by checking and cards) =================
 //
@@ -64,7 +64,7 @@ export const CARD_POSTED_PREFIX = "pcp:";
 // THANK YOU", "AUTOPAY PAYMENT - THANK YOU", "PAYMENT RECEIVED") is a payment
 // whatever category Plaid gave it; Plaid has labeled Amex thank-yous GENERAL_SERVICES
 // and INCOME.
-export const CARD_SIDE_PAYMENT_RE = /\bPAYMENT\b.*\bTHANK YOU\b|\bTHANK YOU\b.*\bPAYMENT\b|\bAUTO ?PAY(MENT)?\b|\bPAYMENT RECEIVED\b|\bAUTOMATIC PAYMENT\b|\b(MOBILE|ONLINE|INTERNET|ELECTRONIC) PAYMENT\b/;
+export const CARD_SIDE_PAYMENT_RE = /\bPAYMENT\b.*\bTHANK YOU\b|\bTHANK YOU\b.*\bPAYMENT\b|\bPAYMENT RECEIVED\b|\bCREDIT CARD PAYMENT\b|\bCARD PAYMENT RECEIVED\b/;
 export function isCardPaymentFor(acct: AccountConfig, t: PlaidTransaction): boolean {
   if (isCreditCardAccount(acct)) {
     if (t.amount >= 0) return false;
@@ -330,6 +330,7 @@ export function contentMatch(
 
   let best: YNABExistingTransaction | null = null;
   let bestDays = Infinity;
+  let equallyClose = false;
   for (const e of rows) {
     if (!isEligible(e)) continue;
     if (Number(e.amount || 0) !== milli) continue;
@@ -364,9 +365,12 @@ export function contentMatch(
           (upper.includes("AMERICAN EXPRESS") || upper.includes("AMEX"));
       }
     }
-    if (ok && dd < bestDays) { best = e; bestDays = dd; }
+    if (ok && dd < bestDays) { best = e; bestDays = dd; equallyClose = false; }
+    else if (ok && dd === bestDays) equallyClose = true;
   }
-  return best;
+  // Two equally close rows are not an identity signal. Do not let register order
+  // decide which financial record gets claimed.
+  return equallyClose ? null : best;
 }
 
 // Last resort, after all name matching: pair a leftover bank charge with a leftover
@@ -579,6 +583,74 @@ export function buildOwnership(
 // windowImport: "all" creates rows for anything in the account's import window (the
 // backfill safety net); "pending" only pending rows (bootstrap); "none" uses the window
 // only to verify what is still pending.
+// Fail closed when a person edits a YNAB row while this sync is planning. YNAB
+// does not offer conditional PATCH/DELETE, so this preflight narrows (but cannot
+// eliminate) the race window between read and write.
+export function concurrentUpdateConflictFields(
+  before: YNABExistingTransaction,
+  latest: YNABExistingTransaction,
+  update: Record<string, any>
+): string[] {
+  return Object.keys(update)
+    .filter(k => k !== "id" && k !== "_via" && k !== "_payee" && k !== "account_id")
+    .filter(k => JSON.stringify((before as any)[k]) !== JSON.stringify((latest as any)[k]));
+}
+
+export function hasConcurrentDeleteConflict(
+  before: YNABExistingTransaction,
+  latest: YNABExistingTransaction
+): boolean {
+  const fields = ["date", "amount", "payee_name", "memo", "cleared", "approved", "category_id", "flag_color", "payee_id", "transfer_transaction_id", "transfer_account_id"];
+  return fields.some(k => JSON.stringify((before as any)[k]) !== JSON.stringify((latest as any)[k]));
+}
+
+
+export interface PlaidSyncDeltaBatch {
+  added: PlaidTransaction[];
+  modified: PlaidTransaction[];
+  removedIds: Set<string>;
+  cursor: string;
+}
+
+/** Fetch one complete Plaid cursor batch; mutation errors restart from the original cursor. */
+export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, originalCursor: string): Promise<PlaidSyncDeltaBatch> {
+  const added: PlaidTransaction[] = [];
+  const modified: PlaidTransaction[] = [];
+  const removedIds = new Set<string>();
+  const maxPaginationRestarts = 3;
+  let cursor = originalCursor;
+  let completed = false;
+  for (let attempt = 0; attempt <= maxPaginationRestarts && !completed; attempt++) {
+    added.length = 0;
+    modified.length = 0;
+    removedIds.clear();
+    let pageCursor = originalCursor;
+    let hasMore = true;
+    try {
+      while (hasMore) {
+        const resp = await plaidCall(env, "/transactions/sync", {
+          access_token: acct.plaid_access_token, cursor: pageCursor, count: 500
+        });
+        if (resp.has_more && resp.next_cursor === pageCursor) {
+          throw new Error("Plaid /transactions/sync pagination cursor did not advance");
+        }
+        added.push(...resp.added.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        modified.push(...resp.modified.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        for (const removed of resp.removed) if (removed.account_id === acct.plaid_account_id) removedIds.add(removed.transaction_id);
+        pageCursor = resp.next_cursor;
+        hasMore = resp.has_more;
+      }
+      cursor = pageCursor;
+      completed = true;
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      if (!message.includes("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION") || attempt === maxPaginationRestarts) throw error;
+    }
+  }
+  if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
+  return { added, modified, removedIds, cursor };
+}
+
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
   const isCard = isCreditCardAccount(acct);
   const pid = acct.plaid_account_id;
@@ -607,15 +679,11 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
   if (!options.backfillOnly) {
-    let hasMore = true;
-    while (hasMore) {
-      const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
-      added.push(...(resp.added || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      modified.push(...(resp.modified || []).filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-      for (const r of (resp.removed || [])) if (!r.account_id || r.account_id === pid) removedIds.add(r.transaction_id);
-      cursor = resp.next_cursor;
-      hasMore = resp.has_more;
-    }
+    const batch = await fetchPlaidSyncDeltas(env, acct, cursor);
+    added.push(...batch.added);
+    modified.push(...batch.modified);
+    for (const id of batch.removedIds) removedIds.add(id);
+    cursor = batch.cursor;
   }
 
   // ---- Plaid: current state of the verification window (read-only) ----
@@ -629,7 +697,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // Never create POSTED rows dated before bootstrap: the YNAB starting balance set at
   // bootstrap already includes them.
   const bootstrapDate = options.importFloor || (await env.SYNC_STATE.get(`bootstrap_date:${pid}`)) || "";
-  let importStart = toIsoDate(new Date(Date.now() - windowDays * 86400000));
+  let importStart = shiftCalendarDate(todayInTimeZone(env), -windowDays);
   if (bootstrapDate > importStart) importStart = bootstrapDate;
   try {
     const w = await getRecentRawTransactionsDetailed(env, acct, Math.max(windowDays, VERIFY_WINDOW_DAYS), 500);
@@ -707,7 +775,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // twice. Normally that is the usual lookback; for older charges it is widened to 5
   // days before the oldest, capped at IDENTITY_HORIZON_DAYS.
   const today = todayInTimeZone(env);
-  const horizonFloor = toIsoDate(new Date(Date.now() - IDENTITY_HORIZON_DAYS * 86400000));
+  const horizonFloor = shiftCalendarDate(todayInTimeZone(env), -IDENTITY_HORIZON_DAYS);
   let snapshotStart = lookbackDate(env);
   for (const it of items) {
     if (!creatable.has(it.L)) continue;
@@ -1280,6 +1348,22 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     }
   }
 
+  // Validate currency only for rows that will be created or have their amount changed.
+  // Plaid amounts are transaction-currency amounts; this worker has no FX conversion.
+  const amountUpdateIds = new Set(updates.filter(u => u.amount !== undefined).map(u => u.id));
+  const currencyItems = items.filter(it =>
+    creates.some(c => createFor.get(c.import_id) === it) ||
+    (!!it.row && amountUpdateIds.has(it.row.id))
+  );
+  if (currencyItems.length > 0) {
+    const planCurrency = await ynabGetPlanCurrency(env);
+    const mismatches = currencyItems.filter(it => it.t.iso_currency_code !== planCurrency);
+    if (mismatches.length > 0) {
+      const detail = mismatches.slice(0, 5).map(it => `${it.t.transaction_id}:${it.t.iso_currency_code}`).join(", ");
+      throw new Error(`Currency mismatch: YNAB plan currency is ${planCurrency}, but Plaid returned transaction currency for ${detail}. No financial writes or cursor advance occurred; automatic FX conversion is not supported.`);
+    }
+  }
+
   // Last check before writing: if sync was paused while this account was being
   // planned, write nothing and leave the cursor where it was.
   if (!(await isSyncEnabled(env))) {
@@ -1295,6 +1379,21 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!options.dryRun) await env.SYNC_STATE.put(undoIntentKey, JSON.stringify({ run_id: options.runId || "", trigger: options.trigger || "unknown", import_ids: creates.map(c => c.import_id) }));
     createdResult = await ynabUpsert(env, creates);
     rejected.push(...(createdResult.duplicate_import_ids || []));
+    // Verify both register legs before treating a transfer create as complete.
+    const transferCreates = creates.filter(c => !!c.payee_id);
+    if (transferCreates.length > 0) {
+      const afterTransfers = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+      const byImportId = new Map(afterTransfers.filter(r => r.import_id).map(r => [r.import_id as string, r]));
+      for (const transfer of transferCreates) {
+        const target = ctx.accounts.find(a => ctx.accountPayeeByNickname[a.nickname] === transfer.payee_id);
+        const sourceRow = byImportId.get(transfer.import_id);
+        if (!target || !sourceRow) {
+          throw new Error(`YNAB transfer verification failed: could not resolve transfer ${transfer.import_id} to its source and destination accounts.`);
+        }
+        await ynabVerifyTransferPair(env, sourceRow.id, acct.ynab_account_id, target.ynab_account_id, transfer.amount);
+      }
+    }
+
     // YNAB can save the rows and still answer with an error (a timeout); the retry
     // then reports them as duplicates. An id that wasn't in YNAB before this run but
     // is there now was created by this run, not refused.
@@ -1333,13 +1432,50 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     }
     await env.SYNC_STATE.delete(undoIntentKey);
   }
-  const cleanUpdates = updates.map(u => { const { _via, _payee, ...rest } = u; return rest; });
-  const updatedResult = await ynabUpdateEach(env, cleanUpdates);
+  // Re-read existing YNAB rows immediately before mutation. A manual edit to a
+  // field this plan would overwrite (or any visible edit to a row slated for
+  // deletion) is preserved and blocks this page's cursor checkpoint.
+  let safeUpdates = updates;
+  let safeDeletes = deletes;
+  const preflightUpdateFailures: { id: string; error: string }[] = [];
+  const preflightDeleteErrors: { id: string; error: string }[] = [];
+  if (updates.length > 0 || deletes.length > 0) {
+    const latest = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+    const latestById = new Map(latest.map(r => [r.id, r]));
+    safeUpdates = updates.filter(u => {
+      const before = snapshot.find(r => r.id === u.id);
+      const now = latestById.get(u.id);
+      if (!before || !now) {
+        preflightUpdateFailures.push({ id: u.id, error: "Transaction disappeared during sync planning; refresh and reconcile before retrying." });
+        return false;
+      }
+      if (concurrentUpdateConflictFields(before, now, u).length > 0) {
+        preflightUpdateFailures.push({ id: u.id, error: "A field this sync planned to change was edited in YNAB during the sync; manual change preserved." });
+        return false;
+      }
+      return true;
+    });
+    safeDeletes = deletes.filter(d => {
+      const before = snapshot.find(r => r.id === d.row.id);
+      const now = latestById.get(d.row.id);
+      if (!before || !now) return true; // A concurrent delete is already converged.
+      if (hasConcurrentDeleteConflict(before, now)) {
+        preflightDeleteErrors.push({ id: d.row.id, error: "Transaction was edited in YNAB during the sync; automatic retirement was skipped." });
+        const L = replacedFor.get(d.row.id);
+        if (L) delete newLinks[L];
+        return false;
+      }
+      return true;
+    });
+  }
+  const cleanUpdates = safeUpdates.map(u => { const { _via, _payee, ...rest } = u; return rest; });
+  const updateAttempt = await ynabUpdateEach(env, cleanUpdates);
+  const updatedResult = { updated: updateAttempt.updated, failed: [...preflightUpdateFailures, ...updateAttempt.failed] };
   const failedUpdateIds = new Set(updatedResult.failed.map(f => f.id));
 
   let deleted = 0;
-  const deleteErrors: any[] = [];
-  for (const d of deletes) {
+  const deleteErrors: any[] = [...preflightDeleteErrors];
+  for (const d of safeDeletes) {
     try { await ynabDeleteTransaction(env, d.row.id); deleted++; }
     catch (e: any) {
       deleteErrors.push({ id: d.row.id, error: e.message });
@@ -1419,17 +1555,17 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (changed) await env.SYNC_STATE.put(tooOldKey, JSON.stringify(logged));
   }
 
-  // Persist state only when it changed.
+  // Persist dependent state first. The Plaid cursor is the page commit record and
+  // must be the final write; any preceding failure leaves the old cursor for replay.
   const survivingIds = new Set(snapshot.filter(r => !deleteIds.has(r.id) || failedDeletes.has(r.id)).map(r => r.id));
   const mergedLinks: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...links, ...newLinks })) if (survivingIds.has(v)) mergedLinks[k] = v;
-  if (!options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
+  const partial = updatedResult.failed.length > 0 || deleteErrors.length > 0;
   if (JSON.stringify(mergedLinks) !== linksJsonAtStart) await env.SYNC_STATE.put(linksKey, JSON.stringify(mergedLinks));
   await persistPostedMap();
   if (legCacheChanged) await env.SYNC_STATE.put(legCacheKey, JSON.stringify(legCache));
   if (Object.keys(legacyPendingMap).length > 0) await env.SYNC_STATE.delete(pendingKey); // superseded by derived ids + links
-
-  const partial = updatedResult.failed.length > 0 || deleteErrors.length > 0;
+  if (!partial && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
   return {
     // "partial": everything else was written, but some updates or removals weren't.
     status: partial ? "partial" : "ok",
@@ -1569,10 +1705,17 @@ export async function bootstrap(env: Env, nickname: string, runId?: string, forc
   let hasMore = true;
   while (hasMore) {
     const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
+    if (!resp || !Array.isArray(resp.added) || !Array.isArray(resp.modified) ||
+        !Array.isArray(resp.removed) || typeof resp.next_cursor !== "string" ||
+        typeof resp.has_more !== "boolean") {
+      throw new Error("Plaid bootstrap returned an invalid sync page; cursor was not committed");
+    }
+    if (resp.has_more && resp.next_cursor === cursor) {
+      throw new Error("Plaid bootstrap pagination cursor did not advance; cursor was not committed");
+    }
     cursor = resp.next_cursor;
     hasMore = resp.has_more;
   }
-  await env.SYNC_STATE.put(`cursor:${acct.plaid_account_id}`, cursor);
 
   const { floor, catchUp, backfillDays } = await bootstrapPlan(env, acct);
   // A brand-new YNAB account: its starting balance is the bank's posted balance right
@@ -1585,6 +1728,10 @@ export async function bootstrap(env: Env, nickname: string, runId?: string, forc
   const skipRules = await getSkipRules(env);
   const settings = settingForAccount(await getAccountAutomationSettings(env), acct);
   const result = await syncAccountEngine(env, acct, skipRules, { backfillOnly: true, windowImport: catchUp ? "all" : "pending", backfillDays, accountSetting: settings, trigger: "bootstrap", runId });
+  if (result?.status !== "ok") {
+    throw new Error(`Bootstrap import did not complete cleanly (status: ${String(result?.status || "unknown")}); initial Plaid cursor was not committed and bootstrap can be safely retried.`);
+  }
+  await env.SYNC_STATE.put(`cursor:${acct.plaid_account_id}`, cursor);
   await env.SYNC_STATE.put(`bootstrapped:${acct.plaid_account_id}`, "1");
 
   return {

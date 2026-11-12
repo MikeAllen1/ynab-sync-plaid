@@ -132,3 +132,22 @@ export async function appendSkippedIncomeHistory(env: Env, records: SkippedIncom
   if (fresh.length === 0) return;
   await env.SYNC_STATE.put("skipped_income_history", JSON.stringify([...fresh, ...existing].slice(0, 30)));
 }
+
+// Reserve every outbound YNAB HTTP attempt against a strongly consistent rolling
+// one-hour budget. The API limit is 200/hour; cap this worker at 180 to leave room
+// for manual clients using the same token. A failed reservation fails closed.
+export async function reserveYnabRequest(env: Env): Promise<void> {
+  if (!env.SYNC_LOCK) throw new Error("YNAB request budget unavailable: SYNC_LOCK Durable Object is not configured.");
+  let response: Response;
+  try {
+    const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName(SYNC_LOCK_DO_ID));
+    response = await stub.fetch("https://sync-lock/ynab-rate/reserve", { method: "POST" });
+  } catch {
+    throw new Error("YNAB request budget unavailable: SYNC_LOCK Durable Object could not be reached; no YNAB request was sent.");
+  }
+  let data: any;
+  try { data = await response.json(); } catch { throw new Error("YNAB request budget returned an invalid response; no YNAB request was sent."); }
+  if (!response.ok || data?.reserved !== true) {
+    throw new Error(`YNAB request budget exhausted or unavailable (${response.status}); request deferred to a later run.`);
+  }
+}
