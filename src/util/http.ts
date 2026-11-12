@@ -34,16 +34,21 @@ export async function fetchWithRetry(
     // caller can consume its response or issue a subsequent financial mutation.
     await keepLeaseAlive();
     if (retrySafe && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      const retryAfter = Number(resp.headers.get("Retry-After"));
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(retryAfter * 1000, 10000)
-        : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
-      await sleep(backoffMs);
+      await sleep(retryAfterDelayMs(resp.headers.get("Retry-After"), attempt));
       attempt++;
       continue;
     }
     return resp;
   }
+}
+
+export function retryAfterDelayMs(header: string | null, attempt: number, now = Date.now()): number {
+  const seconds = header ? Number(header) : NaN;
+  const dateDelay = header && !Number.isFinite(seconds) ? Date.parse(header) - now : NaN;
+  const requestedDelay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : dateDelay;
+  return Number.isFinite(requestedDelay) && requestedDelay > 0
+    ? Math.min(requestedDelay, 10000)
+    : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
 }
 
 export function sleep(ms: number): Promise<void> {
