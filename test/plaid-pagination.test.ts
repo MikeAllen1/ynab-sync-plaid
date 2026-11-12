@@ -24,8 +24,8 @@ test("Plaid transaction window follows offset pagination until total_transaction
     const offset = body.options.offset;
     offsets.push(offset);
     const page = offset === 0
-      ? [{ transaction_id: "p1", account_id: "plaid-checking", amount: 1, date: "2026-11-10", name: "A" }, { transaction_id: "p2", account_id: "plaid-checking", amount: 2, date: "2026-11-10", name: "B" }]
-      : [{ transaction_id: "p3", account_id: "plaid-checking", amount: 3, date: "2026-11-10", name: "C" }];
+      ? [{ transaction_id: "p1", account_id: "plaid-checking", amount: 1, date: "2026-11-10", name: "A", pending: false, iso_currency_code: "USD" }, { transaction_id: "p2", account_id: "plaid-checking", amount: 2, date: "2026-11-10", name: "B", pending: false, iso_currency_code: "USD" }]
+      : [{ transaction_id: "p3", account_id: "plaid-checking", amount: 3, date: "2026-11-10", name: "C", pending: false, iso_currency_code: "USD" }];
     return Response.json({ transactions: page, total_transactions: 3 });
   };
   try {
@@ -38,7 +38,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   }
 });
 
-test("Plaid transaction window stops safely on an empty page even when provider total is inconsistent", async () => {
+test("Plaid transaction window marks an empty page before provider total as incomplete", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -46,10 +46,8 @@ test("Plaid transaction window stops safely on an empty page even when provider 
     return Response.json({ transactions: [], total_transactions: 100 });
   };
   try {
-    const result = await fetchRawWindow(env, account, 30, 2);
+    await assert.rejects(fetchRawWindow(env, account, 30, 2), /empty page before total_transactions/);
     assert.equal(calls, 1);
-    assert.equal(result.transactions.length, 0);
-    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
