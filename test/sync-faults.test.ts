@@ -45,6 +45,8 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
   let failAfterCommit = true;
   let failCursorCommit = false;
   let malformedSyncPage = false;
+  let failPlaidSyncTransport = false;
+  let plaidTransportFailures = 0;
   const originalFetch = globalThis.fetch;
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
@@ -73,6 +75,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     if (url.hostname === "production.plaid.com") {
       const body = JSON.parse(String(init?.body || "{}"));
       if (url.pathname === "/transactions/sync") {
+        if (failPlaidSyncTransport) { plaidTransportFailures++; throw new Error("simulated Plaid connection reset"); }
         if (malformedSyncPage) return Response.json({ added: [], modified: [], removed: [], next_cursor: "cursor-bad", has_more: "false" });
         const second = body.cursor === "cursor-next";
         return Response.json({
@@ -172,7 +175,18 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
       syncAccountEngine(env, account, [], { trigger: "malformed-page", runId: "run-fault-5" }),
       /Plaid \/transactions\/sync returned an invalid page/
     );
+
     assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "malformed pagination metadata must never advance the saved cursor");
+
+    malformedSyncPage = false;
+    failPlaidSyncTransport = true;
+    resetRunCache();
+    await assert.rejects(
+      syncAccountEngine(env, account, [], { trigger: "plaid-transport-fault", runId: "run-fault-6" }),
+      /simulated Plaid connection reset/
+    );
+    assert.equal(plaidTransportFailures, 3, "safe Plaid reads use bounded retries");
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "an upstream timeout must not advance the cursor");
   } finally {
     globalThis.fetch = originalFetch;
     resetRunCache();
