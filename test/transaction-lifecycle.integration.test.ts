@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { syncAccountEngine } from "../src/sync/engine";
 import { resetRunCache } from "../src/plaid/fetch";
 import type { Env } from "../src/types";
+import { makeSyncLockNamespace } from "./helpers/sync-lock";
 
 test("full sync lifecycle converts one pending charge to posted in the same YNAB row", async () => {
   const account = {
@@ -38,6 +39,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
   let phase: "pending" | "posted" = "pending";
   const syncCursors: string[] = [];
   const env = {
+    SYNC_LOCK: makeSyncLockNamespace(),
     ACCOUNT_MAP: JSON.stringify([account]),
     PLAID_ENV: "production",
     PLAID_CLIENT_ID: "plaid-client",
