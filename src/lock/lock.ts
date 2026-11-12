@@ -114,7 +114,10 @@ export async function lockedJson(env: Env, fn: () => Promise<any>): Promise<Resp
   }
   holdLease(env, lock);
   try {
-    return json(await fn());
+    // A handler may answer with its own Response (for example a 409 when the page
+    // that sent a save is out of date); anything else is wrapped as JSON.
+    const result = await fn();
+    return result instanceof Response ? result : json(result);
   } finally {
     dropLease(lock);
     await releaseSyncLock(env, lock);
