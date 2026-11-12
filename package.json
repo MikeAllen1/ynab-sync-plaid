@@ -11,7 +11,9 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "verify:production": "node scripts/verify-cloudflare-production.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261108.1",
