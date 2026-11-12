@@ -9,7 +9,7 @@ free Cloudflare Worker you run yourself.
   Direct Import, or a row you typed in yourself).
 - **Card payments and transfers between your own accounts** become real YNAB transfers.
 - A **dashboard** shows each account's health (bank balance vs YNAB), what each sync did, and lets you
-  undo a sync, pause everything, or run a dry run first.
+  remove the rows a sync added, pause everything, or run a dry run first.
 - **Skip rules, payee aliases and transfer labels** for the cases banks get wrong.
 - Runs on Cloudflare's free plan. Your bank tokens stay in your own Cloudflare account.
 
@@ -110,7 +110,7 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 ## Everyday use
 
 - **Dashboard** (`/dashboard`): overall status, each account's bank-vs-YNAB balance, recent activity,
-  *Sync now*, *Undo…* (previews first), *Pause all syncing* / *Resume syncing*.
+  *Sync now*, *Undo…* (removes the rows a sync added; previews first), *Pause all syncing* / *Resume syncing*.
 - **A bank says "Needs reauth"**: open `/setup` → **Reconnect**. Same accounts, same history.
 - **Logs**: `npx wrangler tail`.
 - **Turn it all off**: Pause on the dashboard, or remove the `[triggers]` block and redeploy.
