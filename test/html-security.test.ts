@@ -16,3 +16,31 @@ test("dynamic CSS classes accept only explicit status values", () => {
   assert.equal(safeCssClass("ok onload=alert(1)", allowed), "");
   assert.equal(safeCssClass(null, allowed), "");
 });
+
+import vm from "node:vm";
+import { dashboardHtml } from "../src/ui/dashboard-page";
+import { setupHtml } from "../src/ui/setup-page";
+
+function inlineScripts(html: string): string {
+  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).join("\n");
+}
+
+test("dashboard and setup page scripts define the escaping helpers they call", async () => {
+  const pages = { dashboard: await dashboardHtml().text(), setup: setupHtml() };
+  for (const [name, html] of Object.entries(pages)) {
+    const script = inlineScripts(html);
+    assert.ok(script.length > 0, `${name}: no inline script`);
+    assert.doesNotThrow(() => new vm.Script(script), `${name}: script does not parse`);
+    for (const fn of ["esc", "safeCssClass"]) {
+      if (new RegExp(`[^.\\w]${fn}\\(`).test(script)) {
+        assert.match(script, new RegExp(`function ${fn}\\(`), `${name}: calls ${fn}() but the page never defines it`);
+      }
+    }
+    // The page copies behave like the server versions.
+    const ctx: any = {};
+    vm.runInNewContext(script.match(/function esc\([\s\S]*?\n/)![0] + (script.match(/function safeCssClass\([\s\S]*?\n/)?.[0] || ""), ctx);
+    const hostile = "<" + "img src=x onerror=" + '"alert(1)">' + " & 'q'";
+    assert.equal(ctx.esc(hostile), escapeHtml(hostile), `${name}: page esc differs from escapeHtml`);
+    if (ctx.safeCssClass) assert.equal(ctx.safeCssClass("ok onload=x", ["ok"]), "");
+  }
+});

@@ -49,6 +49,10 @@ export function setupHtml(): string {
   <div id="status"></div>
 
 <script>
+// Browser-side helpers. The server-side escapeHtml/safeCssClass imports don't exist in
+// the page, so the page script needs its own copies (same behavior as src/util/html.ts).
+function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+function safeCssClass(v, allowed) { return typeof v === "string" && allowed.indexOf(v) >= 0 ? v : ""; }
 var tokenInput = document.getElementById("token");
 sessionStorage.removeItem("ynab_sync_admin_token");
 var authentication = null;
