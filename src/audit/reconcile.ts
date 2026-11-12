@@ -238,5 +238,25 @@ export async function reconcileAllVsBank(env: Env, days: number, accountNickname
     try { results.push(await reconcileAccountVsBank(env, a, days, ctx, skipRules)); }
     catch (e: any) { results.push({ account: a.nickname, error: e.message }); }
   }
-  return { ok: true, ts: new Date().toISOString(), days, results };
+  return reconciliationSummary(results, days);
+}
+
+
+// A report is complete only when every selected account completed without errors,
+// truncated bank history, or unavailable balance data.
+export function reconciliationSummary(results: any[], days: number): any {
+  const failures = results.filter(r => !!r.error);
+  const incomplete = results.filter(r => !r.error && (r.truncated === true || r.balance_check == null));
+  const status = results.length === 0 || failures.length === results.length ? "failed"
+    : failures.length > 0 || incomplete.length > 0 ? "partial"
+    : "complete";
+  return {
+    ok: status === "complete",
+    complete: status === "complete",
+    status,
+    ts: new Date().toISOString(),
+    days,
+    summary: { accounts: results.length, failed: failures.length, incomplete: incomplete.length },
+    results
+  };
 }
