@@ -70,7 +70,12 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
   if (!Array.isArray(updatedIds)) {
     throw new Error("YNAB update returned an invalid success response: data.transaction_ids is required");
   }
-  return { updated: updatedIds.length };
+  const confirmed = new Set(updatedIds.map((id: unknown) => String(id)));
+  const missing = updates.map(u => String(u.id)).filter(id => !confirmed.has(id));
+  if (missing.length > 0) {
+    throw new Error(`YNAB update response did not confirm ${missing.length} of ${updates.length} requested transaction id(s)`);
+  }
+  return { updated: updates.length };
 }
 
 
