@@ -153,6 +153,7 @@ export function dashboardHtml(): Response {
     <button id="btnRescan" class="btn writes" onclick="rescan(this)" title="Look for bank transactions missing from YNAB, over the chosen number of days">Re-scan</button>
     <select id="rescanDays" aria-label="How far back Re-scan looks" title="How far back Re-scan looks"><option value="7" selected>7 days</option><option value="14">14 days</option><option value="30">30 days</option></select>
     <a class="btn" href="https://app.ynab.com/" target="_blank" rel="noopener">Open YNAB ↗</a>
+    <a class="btn ghost" href="https://github.com/MikeAllen1/ynab-sync-plaid/blob/main/docs/GLOSSARY.md" target="_blank" rel="noopener" title="What Sync now, Re-check, Re-scan, Undo and the Activity labels mean">What do these mean? ↗</a>
     <div class="spacer"></div>
     <label class="inline" title="Sync now, Re-scan, Re-check, Transaction reconcile and Activity act on this account">Account <select id="accountSelect"><option value="">All accounts</option></select></label>
     <label class="inline"><input type="checkbox" id="dryRun" checked /> Dry run</label>

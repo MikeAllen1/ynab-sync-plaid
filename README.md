@@ -33,7 +33,7 @@ it didn't create. Every write runs under a single lock, so two syncs can never r
 
 More: [how a charge flows through it](docs/HOW-IT-WORKS.md) · [FAQ](docs/FAQ.md) ·
 [known limitations](docs/LIMITATIONS.md) · [how the code is organized](docs/ARCHITECTURE.md) ·
-[changelog](CHANGELOG.md) · [API contract safeguards](docs/API-CONTRACT-SAFEGUARDS.md) · [account migration](docs/ACCOUNT-MIGRATION.md)
+[what the dashboard's words mean](docs/GLOSSARY.md) · [changelog](CHANGELOG.md) · [API contract safeguards](docs/API-CONTRACT-SAFEGUARDS.md) · [account migration](docs/ACCOUNT-MIGRATION.md)
 
 ## What you need
 
