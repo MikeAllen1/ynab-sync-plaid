@@ -27,6 +27,7 @@ export function setupHtml(nonce: string = newCspNonce()): string {
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 10px; display: grid; gap: 8px; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    .tag { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--bad-bg); color: var(--bad); }
     #status { margin-top: 16px; padding: 12px; border-radius: 8px; display: none; }
     #status.ok { display: block; background: var(--ok-bg); color: var(--ok); }
     #status.err { display: block; background: var(--bad-bg); color: var(--bad); }
@@ -75,7 +76,12 @@ async function authenticate() {
   finally { authentication = null; }
 }
 
-function setStatus(msg, ok) { var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; }
+// The status line sits under the account cards; bring it into view so the result of a
+// click (or why it failed) is never off-screen, especially on a phone.
+function setStatus(msg, ok) {
+  var s = document.getElementById("status"); s.textContent = msg; s.className = ok ? "ok" : "err";
+  try { s.scrollIntoView({ block: "nearest" }); } catch (e) { /* old browsers */ }
+}
 async function post(path, body) {
   if (tokenInput.value.trim()) await authenticate();
   var response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -138,11 +144,17 @@ function addBank() {
 function onLinked(publicToken, metadata) {
   sessionStorage.removeItem("link_token");
   setStatus("Linked. Loading its accounts…", true);
-  Promise.all([post("/exchange-token", { public_token: publicToken }), get("/ynab-accounts")]).then(function (res) {
+  Promise.all([post("/exchange-token", { public_token: publicToken }), get("/ynab-accounts"), get("/accounts").catch(function () { return {}; })]).then(function (res) {
     var ex = res[0], ynab = res[1];
+    // Which YNAB accounts another bank account already feeds (two feeds into one YNAB
+    // account import everything twice).
+    var fedBy = {};
+    ((res[2] && res[2].accounts) || []).forEach(function (a) { if (a.ynab_account_id && !fedBy[a.ynab_account_id]) fedBy[a.ynab_account_id] = prettyName(a.nickname); });
     if (!ex.ok) { setStatus("Link failed: " + (ex.error || "unknown"), false); return; }
     var institution = (metadata && metadata.institution && metadata.institution.name) || "";
-    var options = (ynab.accounts || []).map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + "</option>"; }).join("");
+    var options = (ynab.accounts || []).map(function (a) {
+      return '<option value="' + esc(a.id) + '"' + (fedBy[a.id] ? ' data-fed-by="' + esc(fedBy[a.id]) + '"' : "") + ">" + esc(a.name) + (fedBy[a.id] ? " (already fed by " + esc(fedBy[a.id]) + ")" : "") + "</option>";
+    }).join("");
     document.getElementById("newAccounts").innerHTML = (ex.accounts || []).map(function (a) {
       var isCard = a.type === "credit";
       return '<div class="card" data-plaid="' + esc(a.account_id) + '" data-link="' + esc(ex.link_id) + '" data-institution="' + esc(institution) + '" data-mask="' + esc(a.mask || "") + '"><strong>' + esc(a.name) + " ····" + esc(a.mask || "") + " <span class='muted'>(" + esc(a.subtype || a.type) + ")</span></strong>" +
@@ -151,7 +163,7 @@ function onLinked(publicToken, metadata) {
         '<label class="muted"><input type="checkbox" data-f="card" style="width:auto"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
         '<button data-click="addAccount">Add this account</button></div>';
     }).join("");
-    setStatus("Choose the accounts to sync. Each one starts syncing on the next run.", true);
+    setStatus("Pick the accounts to add. Each is added with sync off: set its YNAB balance to the bank's posted balance, then turn its sync on in the dashboard (Settings).", true);
     document.getElementById("addBtn").disabled = false;
   }).catch(function (e) { setStatus("Error: " + e.message, false); document.getElementById("addBtn").disabled = false; });
 }
@@ -168,6 +180,9 @@ function addAccount(btn) {
     is_credit_card: card.querySelector('[data-f="card"]').checked
   };
   if (!body.nickname || !body.ynab_account_id) { setStatus("Give it a nickname and choose its YNAB account.", false); return; }
+  var chosen = card.querySelector('[data-f="ynab"]').selectedOptions[0];
+  var fedBy = chosen && chosen.getAttribute("data-fed-by");
+  if (fedBy && !confirm(chosen.textContent.replace(/ \(already fed by .*\)$/, "") + " is already fed by " + fedBy + ". Feeding one YNAB account from two bank accounts usually imports every transaction twice (double). Use it anyway?")) return;
   btn.disabled = true;
   post("/accounts/add", body).then(function (d) {
     if (!d.ok) { setStatus(d.error || "Could not add", false); btn.disabled = false; return; }
@@ -177,7 +192,11 @@ function addAccount(btn) {
 
 function prettyName(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
 function loadBanks() {
-  get("/debug/account-map").then(function (accts) {
+  // Which logins need reconnecting, so the right Reconnect button is obvious.
+  var needs = {};
+  Promise.all([get("/debug/account-map"), get("/item-health").catch(function () { return {}; })]).then(function (res) {
+    var accts = res[0];
+    ((res[1] && res[1].items) || []).forEach(function (it) { if (it.status === "needs_reauth") (it.nicknames || []).forEach(function (n) { needs[n] = true; }); });
     var wrap = document.getElementById("banks");
     if (!Array.isArray(accts)) { wrap.innerHTML = '<p class="muted">Enter your admin token above.</p>'; return; }
     wrap.innerHTML = "";
@@ -189,7 +208,8 @@ function loadBanks() {
       var group = logins[k];
       var row = document.createElement("div"); row.className = "row";
       var label = (group[0].institution ? group[0].institution + ": " : "") + group.map(function (a) { return prettyName(a.nickname); }).join(", ");
-      row.innerHTML = '<span class="name">' + esc(label) + "</span>";
+      var broken = group.some(function (a) { return needs[a.nickname]; });
+      row.innerHTML = '<span class="name">' + esc(label) + (broken ? '<span class="tag">Needs reconnect</span>' : "") + "</span>";
       var b = document.createElement("button"); b.textContent = "Reconnect";
       b.setAttribute("aria-label", "Reconnect " + label);
       b.onclick = function () { reconnect(group[0].nickname); };

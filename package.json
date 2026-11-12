@@ -11,14 +11,16 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261108.1",
-    "typescript": "^7.0.2",
-    "wrangler": "^4.158.0",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^26.6.6",
     "tsx": "^4.19.0",
-    "@types/node": "^26.6.6"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.158.0"
   },
   "engines": {
     "node": ">=22"

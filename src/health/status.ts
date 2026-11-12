@@ -188,7 +188,7 @@ export function accountVerdicts(statusRows: any[], audit: any, itemHealth: Recor
     if (!syncOn && !auditOn) {
       v = { level: "", label: "Off", secondary: "Not synced or checked", tracked: false };
     } else if (ih && ih.status === "needs_reauth") {
-      bad("Needs reconnect", `the bank connection needs to be reconnected (${ih.error || "login required"}). Use Settings > Reconnect.`, true);
+      bad("Needs reconnect", `the bank connection needs to be reconnected (${ih.error || "login required"}). Use Reconnect on its row.`, true);
     } else if (syncOn && errored.has(n)) {
       v = { level: "bad", label: "Sync failed", secondary, tracked: true }; hasError = true; // the error itself is already a banner line
     } else if (syncOn && st.overdue) {

@@ -5,6 +5,15 @@ a new major version means you need to do something when you update.
 
 ## Unreleased
 
+- Dashboard: **Pause all syncing** / **Resume syncing** work again (they sent the wrong request and showed "POST only"), and say what they did.
+- Dashboard: the result of a button (or why it failed) stays in view while you scroll, instead of appearing at the top of the page; click it to put it away.
+- Dashboard: edits to skip rules, payee aliases, transfer labels and account settings are no longer thrown away when you switch tabs; "Unsaved changes" shows until you save, and leaving the page asks first.
+- Dashboard: an account that needs reconnecting has a **Reconnect** button on its row (the banner used to point to a "Settings > Reconnect" that didn't exist).
+- Dashboard: **Undo…** lists the recent syncs to pick from instead of asking you to type a number.
+- Dashboard: **Sync now** and **Re-scan** name the account they'll act on when one is picked in the toolbar.
+- Setup: says new accounts are added with sync off (it used to say they'd sync on the next run), marks the bank that needs reconnecting, marks YNAB accounts another bank account already feeds and asks before feeding one twice, and keeps its messages in view.
+- Browser tests for the dashboard and setup pages, desktop and phone (`npm run test:browser`), run in CI.
+
 ## 1.0.0 — 2026-11-11
 
 First public release.

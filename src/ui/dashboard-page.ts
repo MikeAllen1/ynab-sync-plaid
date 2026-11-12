@@ -70,7 +70,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     .btn.live { box-shadow: inset 0 0 0 2px var(--warn-dot); }
     .btn.live::after { content: " (live)"; font-weight: 600; }
     .btn[aria-busy="true"] { opacity: .7; cursor: progress; }
-    .flash { border-radius: var(--r-md); padding: 12px 16px; margin-bottom: 12px; border-left: 3px solid var(--ok-dot); background: var(--ok-bg); color: var(--ok); }
+    .flash { position: sticky; top: 8px; z-index: 5; box-shadow: var(--shadow); border-radius: var(--r-md); padding: 12px 16px; margin-bottom: 12px; border-left: 3px solid var(--ok-dot); background: var(--ok-bg); color: var(--ok); }
     .flash.warn { border-left-color: var(--warn-dot); background: var(--warn-bg); color: var(--warn); }
     .flash.bad { border-left-color: var(--bad-dot); background: var(--bad-bg); color: var(--bad); }
     .flash ul { margin: 0; padding-left: 18px; }
@@ -79,6 +79,11 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     details.adv summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 6px; }
     .btn.warning { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
     .btn.danger { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-border); }
+    .dirty { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--warn); }
+    .dirty[hidden] { display: none; }
+    .row-act { display: flex; width: max-content; margin-top: 6px; }
+    .btn.small { min-height: 28px; padding: 0 10px; font-size: 12px; }
+    .undo-pick { padding: 4px 0 14px; } .undo-pick label { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
     .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
     .btn[disabled] { opacity: .5; cursor: default; }
     select, input[type=text], input[type=password], input:not([type]) { padding: 8px 10px; border: 1px solid var(--control-border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; width: 100%; }
@@ -142,7 +147,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     <div class="kpi"><div class="kpi-label">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
   </div>
 
-  <div id="flash" class="flash" role="status" aria-live="polite" style="display:none"></div>
+  <div id="flash" class="flash" role="status" aria-live="polite" title="Click to dismiss" style="display:none"></div>
   <section id="attention" class="attention" role="status" aria-live="polite" style="display:none"></section>
 
   <div id="accountRows" class="card rows"><div class="row"><span class="row-name">Loading…</span></div></div>
@@ -211,7 +216,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="rules" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addRule">+ Add rule</button>
-        <button class="btn primary" data-click="saveRules">Save rules</button>
+        <button class="btn primary" data-click="saveRules">Save rules</button><span id="rulesDirty" class="dirty" hidden>Unsaved changes</span>
       </div>
     </div>
     <div class="block">
@@ -220,7 +225,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="aliases" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addAlias">+ Add group</button>
-        <button class="btn primary" data-click="saveAliases">Save aliases</button>
+        <button class="btn primary" data-click="saveAliases">Save aliases</button><span id="aliasesDirty" class="dirty" hidden>Unsaved changes</span>
       </div>
     </div>
     <div class="block">
@@ -229,7 +234,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <div id="tlabels" class="list"></div>
       <div class="actions">
         <button class="btn" data-click="addTLabel">+ Add label</button>
-        <button class="btn primary" data-click="saveTLabels">Save labels</button>
+        <button class="btn primary" data-click="saveTLabels">Save labels</button><span id="tlabelsDirty" class="dirty" hidden>Unsaved changes</span>
       </div>
     </div>
   </section>
@@ -242,7 +247,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     </div>
     <div class="block">
       <h2>Admin token</h2>
-      <p class="hint">Stored only in this browser.</p>
+      <p class="hint">Signs this browser in for one hour. The token itself isn't kept; the session lives in a secure cookie. Sign out ends every signed-in browser.</p>
       <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" data-click="saveToken">Save</button><button class="btn ghost" data-click="clearToken">Sign out</button></div></div>
     </div>
     <div class="block">
@@ -255,13 +260,14 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
       <h2>Accounts</h2>
       <p class="hint">Turn syncing on or off, set how often each account syncs, and edit IDs. New banks are added from the setup page. Leave the token blank to keep the current one.</p>
       <div id="accounts" class="list"></div>
-      <div class="actions"><button class="btn primary" data-click="saveAccounts">Save accounts</button></div>
+      <div class="actions"><button class="btn primary" data-click="saveAccounts">Save accounts</button><span id="accountsDirty" class="dirty" hidden>Unsaved changes</span></div>
     </div>
   </section>
 
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
       <div class="recovery"><div><strong>Undo a sync</strong><p>Removes the rows a sync added. It does not reverse anything else that sync did (rows it marked posted, pending rows it removed, amounts it updated). Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" data-click="undo">Undo…</button></div>
+      <div id="undoPick"></div>
       <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" data-click="show" data-path="/force-refresh" data-method="POST">Refresh Plaid</button></div>
       <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" data-click="showPlaidRaw">Show</button></div>
       <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" data-click="tracePending">Explain</button></div>
@@ -287,6 +293,11 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function safeCssClass(v, allowed) { return typeof v === "string" && allowed.indexOf(v) >= 0 ? v : ""; }
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
+// Edits waiting for Save, per section. A section with unsaved edits isn't reloaded when
+// you switch tabs (that used to throw the edits away), and leaving the page asks first.
+var dirty = { rules: false, aliases: false, tlabels: false, accounts: false };
+function setDirty(k, on) { dirty[k] = !!on; var el = document.getElementById(k + "Dirty"); if (el) el.hidden = !on; }
+window.addEventListener("beforeunload", function (ev) { if (Object.keys(dirty).some(function (k) { return dirty[k]; })) { ev.preventDefault(); ev.returnValue = ""; } });
 
 function $(id) { return document.getElementById(id); }
 function dry() { return $("dryRun").checked; }
@@ -355,7 +366,7 @@ async function busy(btn, fn) {
   var label = btn.textContent;
   btn.setAttribute("aria-busy", "true"); btn.disabled = true; btn.textContent = "Running…";
   try { return await fn(); }
-  finally { btn.removeAttribute("aria-busy"); btn.disabled = false; btn.textContent = label; }
+  finally { btn.removeAttribute("aria-busy"); btn.disabled = false; btn.textContent = label; if (btn.id === "btnSync" || btn.id === "btnRescan") scopeLabels(); }
 }
 
 // The result of your last action. It stays until your next action (or 2 minutes),
@@ -370,6 +381,8 @@ function flash(items, level) {
   el.innerHTML = "<ul>" + items.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>";
   flashTimer = setTimeout(function () { el.style.display = "none"; }, 120000);
 }
+// The result stays in view while you scroll (it's sticky); a click puts it away.
+$("flash").addEventListener("click", function () { flash([]); });
 // Backwards-compatible name used by the rules/settings code for action results.
 function attention(items, level) { flash(items, level === "ok" ? "ok" : level); }
 
@@ -390,8 +403,8 @@ function setOverall(text, cls) { var el = $("overall"); el.className = "pill " +
 function openTab(name) {
   document.querySelectorAll(".tab").forEach(function (b) { var on = b.getAttribute("data-tab") === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
   document.querySelectorAll(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + name); });
-  if (name === "settings") { loadItems(false); loadAccounts(); refreshGlobal(); }
-  if (name === "rules") { loadRules(); loadAliases(); loadTLabels(); }
+  if (name === "settings") { loadItems(false); if (!dirty.accounts) loadAccounts(); refreshGlobal(); }
+  if (name === "rules") { if (!dirty.rules) loadRules(); if (!dirty.aliases) loadAliases(); if (!dirty.tlabels) loadTLabels(); }
   if (name === "recovery") loadStuck();
 }
 document.querySelectorAll(".tab").forEach(function (b) {
@@ -412,6 +425,12 @@ document.querySelectorAll(".tab").forEach(function (b) {
 });
 document.querySelectorAll(".panel").forEach(function (p) { var n = p.id.replace(/^tab-/, ""); p.setAttribute("role", "tabpanel"); p.setAttribute("aria-labelledby", "tabbtn-" + n); p.removeAttribute("aria-label"); });
 
+// Sync now and Re-scan act on the account picked in the toolbar; say which on the buttons.
+function scopeLabels() {
+  var a = selected() ? pretty(selected()) : "";
+  if (!$("btnSync").getAttribute("aria-busy")) $("btnSync").textContent = a ? "Sync " + a + " now" : "Sync now";
+  if (!$("btnRescan").getAttribute("aria-busy")) $("btnRescan").textContent = a ? "Re-scan " + a : "Re-scan";
+}
 function updateDryNote() {
   var n = $("dryNote");
   n.textContent = dry() ? "Dry run is on: Sync now and Re-scan only preview and change nothing. Re-check and Transaction reconcile never change anything. Undo always previews and asks you to confirm." : "Dry run is off: Sync now and Re-scan will change YNAB. Re-check and Transaction reconcile never change anything. Undo still previews and asks you to confirm.";
@@ -485,7 +504,8 @@ function renderOverview(h) {
     var diffText = a.audit_unavailable ? "unknown" : d != null ? money(Math.abs(d)) : (a.account && a.bank_balance == null ? "can't check" : "—");
     var diffSub = a.audit_unavailable ? "health check unavailable" : a.account && a.bank_balance == null ? "bank balance unavailable" : a.explained_difference ? (a.explained_by || money(Math.abs(a.explained_difference)) + " explained") : "";
     if (a.checked_at) diffSub = [diffSub, "checked " + ago(a.checked_at)].filter(Boolean).join(" · ");
-    return '<div class="row"><span class="row-name">' + esc(pretty(n)) + (lvl[2] ? '<span class="secondary">' + esc(lvl[2]) + "</span>" : "") + "</span>" +
+    var reconnect = lvl[1] === "Needs reconnect" ? '<a class="btn small row-act" href="/setup" target="_blank" rel="noopener">Reconnect ↗</a>' : "";
+    return '<div class="row"><span class="row-name">' + esc(pretty(n)) + (lvl[2] ? '<span class="secondary">' + esc(lvl[2]) + "</span>" : "") + reconnect + "</span>" +
       '<span class="chip ' + safeCssClass(lvl[0], ["ok", "warn", "bad"]) + '">' + esc(lvl[1]) + '</span>' +
       '<span class="metric">Unexplained difference<strong>' + esc(diffText) + '</strong>' + esc(diffSub) + '</span>' +
       '<span class="metric">Bank pending, in YNAB<strong>' + esc(cov) + '</strong>' + esc(covSub) + '</span>' +
@@ -665,16 +685,27 @@ async function undo(btn) {
   await busy(btn, async function () {
     try {
       var list = await api("/undo?list=true");
-      if (!list.runs || !list.runs.length) { flash(["Nothing to undo."], "warn"); return; }
-      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s) added"; }).join(String.fromCharCode(10));
-      var pick = prompt("Remove the rows which sync added? Enter its number:" + String.fromCharCode(10) + menu, "0");
-      if (pick === null) return;
-      var preview = await api("/undo?index=" + encodeURIComponent(pick));
-      if (!preview.target) { flash([preview.error || "No such sync."], "bad"); return; }
+      if (!list.runs || !list.runs.length) { $("undoPick").innerHTML = ""; flash(["Nothing to undo."], "warn"); return; }
+      // Pick a sync from a list (newest first); the preview and confirmation come next.
+      $("undoPick").innerHTML = '<div class="undo-pick" role="radiogroup" aria-label="Sync to undo"><div id="undoRuns">' + list.runs.map(function (r, i) {
+        var label = when(r.ts) + " · " + r.trigger + " · " + r.count + " row" + (r.count === 1 ? "" : "s") + " added";
+        return '<label><input type="radio" name="undoRun" value="' + esc(r.index) + '"' + (i === 0 ? " checked" : "") + " /> " + esc(label) + "</label>";
+      }).join("") + '</div><div class="actions"><button class="btn warning" data-click="undoPreview">Preview and undo</button><button class="btn ghost" data-click="undoCancel">Cancel</button></div></div>';
+    } catch (e) { flash([e.message], "bad"); }
+  });
+}
+async function undoPreview(btn) {
+  var picked = document.querySelector('input[name="undoRun"]:checked');
+  if (!picked) { flash(["Pick the sync to undo."], "warn"); return; }
+  await busy(btn, async function () {
+    try {
+      var preview = await api("/undo?index=" + encodeURIComponent(picked.value));
+      if (!preview.target) { flash([preview.error || "That sync isn't in the undo list any more."], "bad"); return; }
       if (!confirm(preview.message)) return;
       // Confirm by the previewed run's timestamp, never by list position.
       var r = await api("/undo?ts=" + encodeURIComponent(preview.target.ts) + "&confirm=true", { method: "POST" });
       if (r.ok === false && !r.undone) { flash([r.error], "bad"); return; }
+      $("undoPick").innerHTML = "";
       await loadAll();
       flash(["Undo removed " + r.deleted + " row(s)" + (r.kept && r.kept.length ? "; kept " + r.kept.length + " that have settled or are gone" : "") + "." + (r.errors && r.errors.length ? " " + r.errors.length + " couldn't be removed; they stay in the undo list so you can try again." : "")], r.errors && r.errors.length ? "bad" : "ok");
     } catch (e) { flash([e.message], "bad"); }
@@ -799,7 +830,7 @@ function accountOptions(sel, withAll) {
   var opts = (withAll ? [["*", "All accounts"]] : []).concat(state.accounts.map(function (n) { return [n, pretty(n)]; }));
   return opts.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === sel ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("");
 }
-async function loadRules() { try { state.rules = (await quiet("/skip-rules")).rules || []; renderRules(); } catch (e) { attention([e.message], "bad"); } }
+async function loadRules() { try { state.rules = (await quiet("/skip-rules")).rules || []; setDirty("rules", false); renderRules(); } catch (e) { attention([e.message], "bad"); } }
 function renderRules() {
   $("rules").innerHTML = state.rules.length ? state.rules.map(function (r, i) {
     return '<div class="card item"><div class="grid2">' +
@@ -815,6 +846,7 @@ function renderRules() {
   $("rules").querySelectorAll("[data-r]").forEach(function (el) {
     el.addEventListener("input", function () {
       var r = state.rules[Number(el.getAttribute("data-r"))], f = el.getAttribute("data-f");
+      setDirty("rules", true);
       if (f === "enabled") r.enabled = el.checked;
       else if (f === "amounts") r.amounts = el.value.split(",").map(function (x) { return Number(x.trim()); }).filter(function (x) { return x > 0; });
       else r[f] = el.value;
@@ -829,19 +861,19 @@ async function deleteRule(i) {
   var next = state.rules.filter(function (_, j) { return j !== i; });
   try {
     state.rules = (await api("/skip-rules", { method: "POST", body: JSON.stringify({ rules: next }) })).rules;
-    renderRules(); attention(["Rule deleted."], "ok");
+    setDirty("rules", false); renderRules(); attention(["Rule deleted."], "ok");
   } catch (e) { attention([e.message], "bad"); }
 }
-function addRule() { state.rules.push({ id: "rule-" + Date.now(), enabled: true, account: state.accounts[0] || "*", contains: "", transaction_type: "inflow", reason: "Entered manually in YNAB" }); renderRules(); }
+function addRule() { state.rules.push({ id: "rule-" + Date.now(), enabled: true, account: state.accounts[0] || "*", contains: "", transaction_type: "inflow", reason: "Entered manually in YNAB" }); setDirty("rules", true); renderRules(); }
 async function saveRules() {
-  try { state.rules = (await api("/skip-rules", { method: "POST", body: JSON.stringify({ rules: state.rules }) })).rules; renderRules(); attention(["Skip rules saved."], "ok"); }
+  try { state.rules = (await api("/skip-rules", { method: "POST", body: JSON.stringify({ rules: state.rules }) })).rules; setDirty("rules", false); renderRules(); attention(["Skip rules saved."], "ok"); }
   catch (e) { attention([e.message], "bad"); }
 }
 async function resetRules() {
   if (!confirm("Replace your rules with the built-in defaults?")) return;
   try { state.rules = (await api("/skip-rules/reset", { method: "POST" })).rules; renderRules(); } catch (e) { attention([e.message], "bad"); }
 }
-async function loadAliases() { try { state.aliases = (await quiet("/payee-aliases")).aliases || []; renderAliases(); } catch (e) { attention([e.message], "bad"); } }
+async function loadAliases() { try { state.aliases = (await quiet("/payee-aliases")).aliases || []; setDirty("aliases", false); renderAliases(); } catch (e) { attention([e.message], "bad"); } }
 function renderAliases() {
   $("aliases").innerHTML = state.aliases.length ? state.aliases.map(function (g, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Merchant</span><input aria-label="Merchant" data-a="' + i + '" data-f="canonical" value="' + esc(g.canonical) + '" /></div>' +
@@ -851,6 +883,7 @@ function renderAliases() {
   $("aliases").querySelectorAll("[data-a]").forEach(function (el) {
     el.addEventListener("input", function () {
       var g = state.aliases[Number(el.getAttribute("data-a"))], f = el.getAttribute("data-f");
+      setDirty("aliases", true);
       g[f] = f === "patterns" ? el.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean) : el.value;
     });
   });
@@ -861,16 +894,16 @@ async function deleteAlias(i) {
   var next = state.aliases.filter(function (_, j) { return j !== i; });
   try {
     state.aliases = (await api("/payee-aliases", { method: "POST", body: JSON.stringify({ aliases: next }) })).aliases;
-    renderAliases(); attention(["Alias group removed."], "ok");
+    setDirty("aliases", false); renderAliases(); attention(["Alias group removed."], "ok");
   } catch (e) { attention([e.message], "bad"); }
 }
-function addAlias() { state.aliases.push({ canonical: "", patterns: [] }); renderAliases(); }
+function addAlias() { state.aliases.push({ canonical: "", patterns: [] }); setDirty("aliases", true); renderAliases(); }
 async function saveAliases() {
-  try { state.aliases = (await api("/payee-aliases", { method: "POST", body: JSON.stringify({ aliases: state.aliases }) })).aliases; renderAliases(); attention(["Aliases saved."], "ok"); }
+  try { state.aliases = (await api("/payee-aliases", { method: "POST", body: JSON.stringify({ aliases: state.aliases }) })).aliases; setDirty("aliases", false); renderAliases(); attention(["Aliases saved."], "ok"); }
   catch (e) { attention([e.message], "bad"); }
 }
 
-async function loadTLabels() { try { state.tlabels = (await quiet("/transfer-labels")).labels || []; renderTLabels(); } catch (e) { attention([e.message], "bad"); } }
+async function loadTLabels() { try { state.tlabels = (await quiet("/transfer-labels")).labels || []; setDirty("tlabels", false); renderTLabels(); } catch (e) { attention([e.message], "bad"); } }
 function renderTLabels() {
   $("tlabels").innerHTML = state.tlabels.length ? state.tlabels.map(function (l, i) {
     return '<div class="card item"><div class="grid2"><div><span class="field-label">Last digits</span><input aria-label="Last digits" inputmode="numeric" data-t="' + i + '" data-f="tail" value="' + esc(l.tail) + '" /></div>' +
@@ -878,13 +911,13 @@ function renderTLabels() {
       '<div class="actions"><button class="btn ghost" data-click="deleteTLabel" data-arg="' + i + '">Remove</button></div></div>';
   }).join("") : '<div class="empty">No labels.</div>';
   $("tlabels").querySelectorAll("[data-t]").forEach(function (el) {
-    el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; });
+    el.addEventListener("input", function () { state.tlabels[Number(el.getAttribute("data-t"))][el.getAttribute("data-f")] = el.value; setDirty("tlabels", true); });
   });
 }
-function addTLabel() { state.tlabels.push({ tail: "", label: "" }); renderTLabels(); }
+function addTLabel() { state.tlabels.push({ tail: "", label: "" }); setDirty("tlabels", true); renderTLabels(); }
 async function deleteTLabel(i) { state.tlabels = state.tlabels.filter(function (_, j) { return j !== i; }); await saveTLabels(); }
 async function saveTLabels() {
-  try { state.tlabels = (await api("/transfer-labels", { method: "POST", body: JSON.stringify({ labels: state.tlabels }) })).labels; renderTLabels(); attention(["Transfer labels saved."], "ok"); }
+  try { state.tlabels = (await api("/transfer-labels", { method: "POST", body: JSON.stringify({ labels: state.tlabels }) })).labels; setDirty("tlabels", false); renderTLabels(); attention(["Transfer labels saved."], "ok"); }
   catch (e) { attention([e.message], "bad"); }
 }
 
@@ -902,7 +935,11 @@ async function refreshGlobal() {
 async function toggleGlobal() {
   var on = $("globalBtn").getAttribute("data-on") === "1";
   if (on && !confirm("Pause all syncing? Nothing imports until you resume.")) return;
-  try { await api(on ? "/pause" : "/resume"); await refreshGlobal(); loadAll(); } catch (e) { attention([e.message], "bad"); }
+  try {
+    await api(on ? "/pause" : "/resume", { method: "POST" });
+    await refreshGlobal(); loadAll();
+    attention([on ? "All syncing is paused. Nothing is written to YNAB until you resume." : "Syncing resumed. Each account syncs on its next run."], on ? "warn" : "ok");
+  } catch (e) { attention([(on ? "Couldn't pause: " : "Couldn't resume: ") + e.message + " Nothing was changed."], "bad"); }
 }
 async function saveToken() {
   var v = $("token").value.trim(); if (!v) return;
@@ -964,6 +1001,8 @@ async function loadAccounts() {
         '<div class="full"><span class="field-label">Replace access token (leave blank to keep)</span><input aria-label="Replace access token (leave blank to keep)" type="password" data-f="plaid_access_token" autocomplete="off" /></div>' +
         "</div></details></div></div>";
     }).join("") || '<div class="empty">No accounts yet. <a href="/setup">Add a bank</a>.</div>';
+    setDirty("accounts", false);
+    $("accounts").querySelectorAll("[data-f]").forEach(function (el) { el.addEventListener("input", function () { setDirty("accounts", true); }); el.addEventListener("change", function () { setDirty("accounts", true); }); });
   } catch (e) { $("accounts").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
 async function saveAccounts() {
@@ -979,6 +1018,7 @@ async function saveAccounts() {
   });
   try {
     await api("/accounts/save", { method: "POST", body: JSON.stringify({ accounts: accounts, settings: settings }) });
+    setDirty("accounts", false);
     attention(["Accounts saved. Changes apply on the next sync."], "ok");
     loadAccounts(); loadAll();
   } catch (e) { attention([e.message], "bad"); }
@@ -993,7 +1033,7 @@ async function saveAccounts() {
     hashToken = new URLSearchParams(location.hash.slice(1)).get("token") || "";
     history.replaceState(null, "", location.pathname);
   }
-  $("accountSelect").addEventListener("change", function () { loadEvents(); $("traceOut").innerHTML = ""; });
+  $("accountSelect").addEventListener("change", function () { loadEvents(); $("traceOut").innerHTML = ""; scopeLabels(); });
   updateDryNote();
   if (hashToken) {
     $("token").value = hashToken;
@@ -1019,6 +1059,7 @@ async function saveAccounts() {
 var CLICK = {
   runSync: function (el) { runSync(el); }, recheck: function (el) { recheck(el); }, rescan: function (el) { rescan(el); },
   runReconcile: function (el) { runReconcile(el); }, undo: function (el) { undo(el); },
+  undoPreview: function (el) { undoPreview(el); }, undoCancel: function () { $("undoPick").innerHTML = ""; },
   tracePending: function (el) { tracePending(el); }, loadStuck: function (el) { loadStuck(el); },
   addRule: function () { addRule(); }, saveRules: function () { saveRules(); },
   addAlias: function () { addAlias(); }, saveAliases: function () { saveAliases(); },

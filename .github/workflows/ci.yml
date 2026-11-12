@@ -33,3 +33,16 @@ jobs:
           cp wrangler.toml.example wrangler.toml
           sed -i 's/PASTE_KV_NAMESPACE_ID_HERE/00000000000000000000000000000000/; s/PASTE_YNAB_BUDGET_ID_HERE/00000000-0000-0000-0000-000000000000/' wrangler.toml
           npx wrangler deploy --dry-run --outdir dist
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Browser tests (dashboard and setup pages, desktop and phone)
+        run: npm run test:browser
