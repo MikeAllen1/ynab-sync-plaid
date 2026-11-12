@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ynabDeleteTransaction, ynabUpdateEach, ynabUpdateTransactions } from "../src/ynab/client";
+import { ynabDeleteTransaction, ynabUpdateEach, ynabUpdateTransactions, ynabUpsert } from "../src/ynab/client";
 import type { Env } from "../src/types";
 
 const env = { YNAB_TOKEN: "test-token", YNAB_BUDGET_ID: "test-budget" } as Env;
@@ -46,5 +46,74 @@ test("YNAB malformed 2xx update response is not reported as a successful zero-ro
       ynabUpdateTransactions(env, [{ id: "row-1", cleared: "cleared" }]),
       /invalid success response.*transaction_ids/
     );
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("ambiguous YNAB transfer create is safely recovered by the same import id", async () => {
+  const originalFetch = globalThis.fetch;
+  const sourceRows = new Map<string, any>();
+  const pairedRows = new Map<string, any>();
+  let first = true;
+  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    const transactions = body.transactions || [];
+    for (const row of transactions) {
+      if (sourceRows.has(row.import_id)) continue;
+      sourceRows.set(row.import_id, { ...row, id: "source-" + sourceRows.size });
+      if (row.payee_id) pairedRows.set(row.import_id, { id: "paired-" + pairedRows.size, transfer_transaction_id: "source-" + (sourceRows.size - 1) });
+    }
+    if (first) { first = false; throw new Error("connection reset after transfer pair commit"); }
+    const duplicates = transactions.filter((row: any) => sourceRows.has(row.import_id)).map((row: any) => row.import_id);
+    return Response.json({ data: { transaction_ids: [], duplicate_import_ids: duplicates } });
+  };
+  const row = {
+    account_id: "checking", date: "2026-11-11", amount: -125000,
+    payee_id: "transfer-payee-card", import_id: "wpend:payment-123"
+  };
+  try {
+    await assert.rejects(ynabUpsert(env, [row]), /connection reset after transfer pair commit/);
+    assert.equal(sourceRows.size, 1);
+    assert.equal(pairedRows.size, 1);
+    const recovered = await ynabUpsert(env, [row]);
+    assert.equal(recovered.duplicates, 1);
+    assert.equal(sourceRows.size, 1, "replay must not duplicate the source transfer leg");
+    assert.equal(pairedRows.size, 1, "replay must not duplicate the paired card leg");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("ambiguous YNAB update is retried by state reconciliation without duplicate mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  const row = { id: "existing-row", cleared: "cleared" };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    row.cleared = "cleared";
+    if (calls === 1) throw new Error("connection reset after update commit");
+    return Response.json({ data: { transaction_ids: ["existing-row"] } });
+  };
+  try {
+    await assert.rejects(ynabUpdateTransactions(env, [{ id: "existing-row", cleared: "cleared" }]), /connection reset/);
+    const result = await ynabUpdateTransactions(env, [{ id: "existing-row", cleared: "cleared" }]);
+    assert.equal(result.updated, 1);
+    assert.equal(row.cleared, "cleared");
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("ambiguous YNAB delete is safely retried after confirming the row is gone", async () => {
+  const originalFetch = globalThis.fetch;
+  let exists = true;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (!exists) return new Response("", { status: 404 });
+    exists = false;
+    throw new Error("connection reset after delete commit");
+  };
+  try {
+    await assert.rejects(ynabDeleteTransaction(env, "row-to-delete"), /connection reset/);
+    assert.deepEqual(await ynabDeleteTransaction(env, "row-to-delete"), { already_deleted: true });
+    assert.equal(exists, false);
+    assert.equal(calls, 2);
   } finally { globalThis.fetch = originalFetch; }
 });
