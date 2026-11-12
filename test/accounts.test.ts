@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
+import { getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, saveAccountConfiguration, saveAccountsMerged } from "../src/store/accounts";
 import type { Env } from "../src/types";
 
 function mockEnv(initial: Record<string, string> = {}) {
@@ -130,6 +130,90 @@ test("valid persisted account maps normalize nicknames consistently", async () =
   assert.equal(accounts[0].ynab_account_id, "ynab-checking");
 });
 
+
+test("account mapping changes fail closed while token rotation for the same mapping remains allowed", async () => {
+  const { env, values } = mockEnv({ account_map: accountMap });
+  await assert.rejects(
+    () => saveAccountsMerged(env, [{
+      nickname: "checking",
+      plaid_access_token: "rotated-token",
+      plaid_account_id: "different-plaid-id",
+      ynab_account_id: "ynab-checking"
+    }]),
+    /cannot change Plaid or YNAB account IDs in place/
+  );
+  assert.equal(JSON.parse(values.get("account_map") || "[]")[0].plaid_account_id, "plaid-checking");
+
+  const rotated = await saveAccountsMerged(env, [{
+    nickname: "checking",
+    plaid_access_token: "rotated-token",
+    plaid_account_id: "plaid-checking",
+    ynab_account_id: "ynab-checking"
+  }]);
+  assert.equal(rotated[0].plaid_access_token, "rotated-token");
+});
+
+test("an existing Plaid account cannot be silently moved to another nickname and YNAB account", async () => {
+  const { env, values } = mockEnv({ account_map: accountMap });
+  await assert.rejects(
+    () => saveAccountsMerged(env, [{
+      nickname: "renamed-checking",
+      plaid_access_token: "access-token",
+      plaid_account_id: "plaid-checking",
+      ynab_account_id: "different-ynab-account"
+    }]),
+    /cannot be silently renamed or moved to another YNAB account/
+  );
+  assert.equal(JSON.parse(values.get("account_map") || "[]")[0].ynab_account_id, "ynab-checking");
+});
+
+test("an existing Plaid account cannot be renamed without an explicit migration", async () => {
+  const { env } = mockEnv({ account_map: accountMap });
+  await assert.rejects(
+    () => saveAccountsMerged(env, [{
+      nickname: "renamed-checking",
+      plaid_access_token: "access-token",
+      plaid_account_id: "plaid-checking",
+      ynab_account_id: "ynab-checking"
+    }]),
+    /cannot be silently renamed or moved/
+  );
+});
+
+test("account and automation configuration are committed through one bundle key", async () => {
+  const { env, values } = mockEnv({
+    account_map: accountMap,
+    account_automation_settings: JSON.stringify([
+      { nickname: "checking", sync_enabled: false },
+      { nickname: "savings", sync_enabled: true },
+    ]),
+  });
+  const input = JSON.parse(accountMap).map((a: any) => ({ ...a }));
+  input[0].plaid_access_token = "rotated-token";
+  const saved = await saveAccountConfiguration(env, input, [{ nickname: "checking", sync_enabled: true }]);
+  assert.equal(values.has("account_config_bundle"), true);
+  assert.equal(values.get("account_map"), accountMap, "legacy account key is not partially overwritten");
+  assert.equal(JSON.parse(values.get("account_automation_settings") || "[]").find((s: any) => s.nickname === "checking")?.sync_enabled, false);
+  assert.equal((await getAccounts(env))[0].plaid_access_token, "rotated-token");
+  assert.equal((await getAccountAutomationSettings(env)).find(s => s.nickname === "checking")?.sync_enabled, true);
+  assert.equal(saved.accounts.length, 2);
+});
+
+test("failed combined configuration commit leaves both legacy configuration keys unchanged", async () => {
+  const settings = JSON.stringify([{ nickname: "checking", sync_enabled: false }]);
+  const { env, values } = mockEnv({ account_map: accountMap, account_automation_settings: settings });
+  const originalPut = env.SYNC_STATE.put.bind(env.SYNC_STATE);
+  env.SYNC_STATE.put = async (key: string, value: string) => {
+    if (key === "account_config_bundle") throw new Error("simulated bundle commit failure");
+    return originalPut(key, value);
+  };
+  const input = JSON.parse(accountMap).map((a: any) => ({ ...a }));
+  input[0].plaid_access_token = "rotated-token";
+  await assert.rejects(() => saveAccountConfiguration(env, input, [{ nickname: "checking", sync_enabled: true }]), /bundle commit failure/);
+  assert.equal(values.get("account_map"), accountMap);
+  assert.equal(values.get("account_automation_settings"), settings);
+  assert.equal(values.has("account_config_bundle"), false);
+});
 
 test("token display helper never reveals credential characters", () => {
   assert.equal(maskToken("access-token-with-sensitive-prefix"), "••••••••");
