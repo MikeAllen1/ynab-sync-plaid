@@ -87,7 +87,9 @@ The short version:
 
 7. **Line up the starting point.** In YNAB, set each account's balance to the bank's **posted** balance
    (reconcile it). Then open `/dashboard`, go to **Settings** and turn the account's sync on. The first
-   run picks up from there (currently-pending charges included).
+   run picks up from there (currently-pending charges included) and never imports older history, so if
+   the balance was off, it stays off by that amount until you adjust it in YNAB. **Re-check** shows any
+   difference. ([More on the first sync](docs/setup/4-worker.md#start-syncing-one-account-at-a-time).)
 
 8. **Webhooks** (optional, makes new charges appear within minutes instead of on the next cron):
    ```bash
