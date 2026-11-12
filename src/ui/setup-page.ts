@@ -197,14 +197,6 @@ function loadBanks() {
 })();
 get("/session").then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
 
-document.addEventListener("click", function (event) {
-  var target = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
-  if (!target) return;
-  switch (target.getAttribute("data-action")) {
-    case "add-bank": addBank(); break;
-    case "add-account": addAccount(target); break;
-  }
-});
 
 </script>
 </body>
