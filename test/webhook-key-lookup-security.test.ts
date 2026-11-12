@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getPlaidVerificationKey, verifyPlaidWebhook, whKeyReadWindow, WH_KEY_READS_PER_WINDOW } from "../src/plaid/webhooks";
+import { verifyPlaidWebhook } from "../src/plaid/webhooks";
+import { SyncLock } from "../src/lock/sync-lock-do";
 import type { Env } from "../src/types";
 
 function b64url(value: unknown): string {
@@ -21,18 +22,23 @@ test("malformed and oversized Plaid key IDs are rejected before KV access", asyn
   assert.equal(reads, 0);
 });
 
-test("webhook key cache reads stop at the per-isolate budget", async () => {
-  let reads = 0;
-  const env = {
-    SYNC_STATE: { get: async () => { reads++; return null; } }
-  } as unknown as Env;
-  whKeyReadWindow.start = Date.now();
-  whKeyReadWindow.count = WH_KEY_READS_PER_WINDOW;
-  try {
-    assert.equal(await getPlaidVerificationKey(env, "valid-shaped-kid"), null);
-    assert.equal(reads, 0);
-  } finally {
-    whKeyReadWindow.start = 0;
-    whKeyReadWindow.count = 0;
+test("webhook key cache read budget is globally enforced by the Durable Object", async () => {
+  const data = new Map<string, unknown>();
+  const storage = {
+    get: async (key: string) => data.get(key),
+    put: async (key: string, value: unknown) => { data.set(key, value); },
+    delete: async (key: string) => data.delete(key),
+    transaction: async (fn: (txn: any) => Promise<any>) => fn({
+      get: async (key: string) => data.get(key),
+      put: async (key: string, value: unknown) => { data.set(key, value); }
+    })
+  };
+  const durableObject = new SyncLock({ storage } as unknown as DurableObjectState);
+  const request = () => new Request("https://sync-lock/webhook/key-read", { method: "POST" });
+  for (let i = 0; i < 1000; i++) {
+    const result = await (await durableObject.fetch(request())).json() as any;
+    assert.equal(result.allowed, true);
   }
+  const limited = await (await durableObject.fetch(request())).json() as any;
+  assert.equal(limited.allowed, false);
 });
