@@ -8,22 +8,58 @@ import { Env } from "../types";
 // + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
-export async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  retries = 2,
+  options: { retrySafe?: boolean; beforeAttempt?: () => Promise<void> } | boolean = {}
+): Promise<Response> {
+  const method = String(init.method || "GET").toUpperCase();
+  const safeToRetry = typeof options === "boolean"
+    ? options
+    : options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
-    const resp = await fetch(url, init);
-    if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      const retryAfter = Number(resp.headers.get("Retry-After"));
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(retryAfter * 1000, 10000)
-        : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+    if (typeof options !== "boolean" && options.beforeAttempt) await options.beforeAttempt();
+    let resp: Response;
+    try {
+      resp = await fetch(url, init);
+    } catch (error) {
+      // A transport error after a mutation is ambiguous: the remote service may
+      // have committed it. Never replay writes unless the caller explicitly
+      // establishes that the operation is safe to repeat.
+      await keepLeaseAlive();
+      if (!safeToRetry || attempt >= retries) throw error;
+      await sleep(Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250));
+      attempt++;
+      continue;
+    }
+    // Revalidate ownership before the caller can consume the response or issue
+    // a subsequent financial mutation.
+    await keepLeaseAlive();
+    if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
+      const backoffMs = retryAfterDelayMs(resp.headers.get("Retry-After"), attempt);
+      // Do not shorten a provider-specified delay; defer to the next scheduled
+      // execution when it exceeds this Worker request's bounded retry window.
+      if (backoffMs > 10000) return resp;
+      try { await resp.body?.cancel(); } catch { /* retry only if semantics are safe */ }
       await sleep(backoffMs);
       attempt++;
       continue;
     }
     return resp;
   }
+}
+
+export function retryAfterDelayMs(header: string | null, attempt: number, now = Date.now()): number {
+  if (header !== null && header.trim() !== "") {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.max(0, date - now);
+  }
+  return Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
 }
 
 export function sleep(ms: number): Promise<void> {
