@@ -36,9 +36,10 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountConfiguration, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, resealAccountTokens, saveAccountConfiguration, tokenStorageMode, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { withDurableAccountState } from "./store/durable-state";
+import { openToken, sealToken } from "./util/token-crypto";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
 import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
@@ -529,6 +530,16 @@ export const workerEntry = {
       }
     }
 
+    // Encrypt (or re-seal with the current key) every stored Plaid token. Run after
+    // setting TOKEN_ENCRYPTION_KEY, and after rotating it.
+    if (url.pathname === "/accounts/encrypt-tokens") {
+      if (req.method !== "POST") return json({ error: "POST only" }, 405);
+      const unauthorized = await requireAdmin(req, env);
+      if (unauthorized) return unauthorized;
+      if (!env.TOKEN_ENCRYPTION_KEY) return json({ ok: false, error: "Set TOKEN_ENCRYPTION_KEY first: openssl rand -base64 32, then npx wrangler secret put TOKEN_ENCRYPTION_KEY." }, 400);
+      return lockedJson(env, async () => ({ ok: true, ...(await resealAccountTokens(env)), token_storage: await tokenStorageMode(env) }));
+    }
+
     // Save account config and automation settings together, under the lock, so a
     // sync never sees one half of an edit.
     if (url.pathname === "/accounts/save") {
@@ -561,6 +572,7 @@ export const workerEntry = {
         const pendingKey = "pending_link:" + linkId;
         const pending = await readJson(env, pendingKey, null);
         if (!pending?.access_token || !pending?.item_id) return { ok: false, error: "That bank link expired or is invalid. Link the bank again." };
+        pending.access_token = await openToken(env, String(pending.access_token));
         const current = (await getAccounts(env)).find(a => a.nickname === nickname);
         if (!current) return { ok: false, error: "No mapped account named " + nickname + "." };
         if (String(body.confirm_ynab_account_id || "") !== current.ynab_account_id) {
@@ -595,7 +607,7 @@ export const workerEntry = {
         const ex = await plaidCall(env, "/item/public_token/exchange", { public_token: body.public_token });
         const accts = await plaidCall(env, "/accounts/get", { access_token: ex.access_token });
         const linkId = crypto.randomUUID();
-        await env.SYNC_STATE.put(`pending_link:${linkId}`, JSON.stringify({ access_token: ex.access_token, item_id: ex.item_id }), { expirationTtl: 3600 });
+        await env.SYNC_STATE.put(`pending_link:${linkId}`, JSON.stringify({ access_token: await sealToken(env, ex.access_token), item_id: ex.item_id }), { expirationTtl: 3600 });
         return json({
           ok: true,
           link_id: linkId,
@@ -616,6 +628,7 @@ export const workerEntry = {
         const body = await req.json() as any;
         const pending = await readJson(env, `pending_link:${body.link_id}`, null);
         if (!pending) return { ok: false, error: "That bank link expired (1 hour). Link the bank again." };
+        pending.access_token = await openToken(env, String(pending.access_token || ""));
         const nickname = String(body.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
         const plaidAccountId = String(body.plaid_account_id || "").trim();
         const ynabAccountId = String(body.ynab_account_id || "").trim();

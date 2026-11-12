@@ -105,7 +105,7 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 | Where | What |
 |---|---|
 | `wrangler.toml` `[vars]` | `PLAID_ENV`, `YNAB_BUDGET_ID`, `TIMEZONE`, optional `CC_TRANSFER_CUTOFF` (card payments before this date stay in the card's starting balance), `PLAID_REFRESH = "off"` (no billed refresh calls on paid Plaid plans) and `WORKER_ORIGIN` (links in alert emails) |
-| Secrets | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `YNAB_TOKEN`, `ADMIN_TOKEN`; optional `RESEND_API_KEY` + `ALERT_EMAIL_TO` (email when a bank needs reconnecting or syncs fail), `ALERT_WEBHOOK_URL` (Slack, Discord or any URL; sync failures, warnings and recoveries). Set both to get both. |
+| Secrets | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `YNAB_TOKEN`, `ADMIN_TOKEN`; recommended `TOKEN_ENCRYPTION_KEY` (encrypts bank tokens at rest, see [setup](docs/setup/4-worker.md)); optional `RESEND_API_KEY` + `ALERT_EMAIL_TO` (email when a bank needs reconnecting or syncs fail), `ALERT_WEBHOOK_URL` (Slack, Discord or any URL; sync failures, warnings and recoveries). Set both to get both. |
 | Dashboard → Settings | Per account: sync on/off, how often, catch-up window, health checks, how card payments name each card (last 4 / words) |
 | Dashboard → Rules | **Skip rules** (bank items never to import), **payee aliases** (names that mean the same merchant), **transfer labels** (name transfers to your own accounts elsewhere by their last digits, e.g. `1234` → "Savings") |
 
@@ -128,7 +128,8 @@ Start with **Dry run** ticked on the dashboard to see what a sync would do befor
 
 ## Security
 
-- Bank access tokens are stored in your Cloudflare KV, never in the code or repo.
+- Bank access tokens are stored in your Cloudflare KV, never in the code or repo, and encrypted with your own key
+  when `TOKEN_ENCRYPTION_KEY` is set.
 - Every endpoint that reads or changes data needs the admin token, compared in constant time. The dashboard
   exchanges it once for a one-hour session held in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, so page
   scripts never see it; scripts can send it in the `x-admin-token` header instead.

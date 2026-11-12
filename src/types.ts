@@ -8,6 +8,10 @@ export interface Env {
   // Optional. A separate, read-only credential for uptime monitors: it can read a
   // minimal /health summary and nothing else. Must differ from ADMIN_TOKEN.
   HEALTH_TOKEN?: string;
+  // Optional. Base64 of 32 random bytes; when set, Plaid access tokens are stored in
+  // KV encrypted (AES-256-GCM). _PREVIOUS is accepted for reading during a rotation.
+  TOKEN_ENCRYPTION_KEY?: string;
+  TOKEN_ENCRYPTION_KEY_PREVIOUS?: string;
 
   PLAID_ENV: string;
   YNAB_BUDGET_ID: string;

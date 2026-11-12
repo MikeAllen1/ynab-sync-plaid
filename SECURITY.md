@@ -2,7 +2,8 @@
 
 ## What this worker holds
 
-- **Plaid access tokens** for your banks, stored in your Cloudflare KV (`account_map`).
+- **Plaid access tokens** for your banks, stored in your Cloudflare KV, encrypted with AES-256-GCM when the
+  `TOKEN_ENCRYPTION_KEY` secret is set (recommended; `/health` reports `token_storage`).
 - Your **YNAB token**, **Plaid secret** and **admin token**, stored as encrypted Cloudflare secrets.
 - Sync state and logs (amounts, dates, payee names) in the same KV namespace.
 
