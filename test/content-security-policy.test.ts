@@ -5,7 +5,7 @@ import { workerEntry } from "../src/index";
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
 function containsExactProductionPlaidOrigin(connectSrc: string): boolean {
-  return connectSrc.split(/\\s+/).some(source => {
+  return connectSrc.split(/\s+/).some(source => {
     try {
       const origin = new URL(source);
       return origin.protocol === "https:" && origin.hostname === "production.plaid.com" &&
