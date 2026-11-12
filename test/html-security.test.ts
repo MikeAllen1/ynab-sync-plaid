@@ -66,6 +66,11 @@ test("admin pages run under a nonce CSP with no inline event handlers", async ()
   const pages = { dashboard: await response.text(), setup: setupHtml("test-nonce-2") };
   for (const [name, html] of Object.entries(pages)) {
     assert.doesNotMatch(html, /\son[a-z]+\s*=\s*["']/i, `${name}: inline event handler attribute found`);
-    for (const tag of html.match(/<script\b[^>]*>/g) || []) assert.match(tag, /nonce="test-nonce-[12]"/, `${name}: script without nonce: ${tag}`);
+    // Every opening script tag, found by plain (case-insensitive) string search.
+    const lower = html.toLowerCase();
+    for (let at = lower.indexOf("<script"); at >= 0; at = lower.indexOf("<script", at + 1)) {
+      const tag = html.slice(at, html.indexOf(">", at) + 1);
+      assert.match(tag, /nonce="test-nonce-[12]"/, `${name}: script without nonce: ${tag}`);
+    }
   }
 });

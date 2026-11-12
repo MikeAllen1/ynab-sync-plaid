@@ -160,7 +160,7 @@ export function institutionWords(a: AccountConfig): string[] {
 
 // A transfer between two of your own (non-card) accounts: the other account the bank
 // text names. It has to look like a transfer, and the other account has to be named
-// as an ACCOUNT ("...1274", "XXXXXX1083", "ACCT 1274", or words you saved), not just
+// as an ACCOUNT ("...4321", "XXXXXX4321", "ACCT 4321", or words you saved), not just
 // contain the digits (a store number, a phone number, a trace number). Money coming IN
 // may also be named by the other bank's name ("ACH DEPOSIT JPMORGAN CHASE"); that only
 // lets it be matched to a transfer already booked, so the looser rule is safe there.
