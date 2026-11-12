@@ -380,7 +380,7 @@ export async function migratePlaidAccountIdentity(
   // that state could attach a different account's cursor or lifecycle ownership.
   const stateKeys = [
     "cursor", "posted", "pending", "links", "rejected", "bootstrapped",
-    "bootstrap_date", "legs_not_worker", "update_failed", "too_old_logged",
+    "bootstrap_date", "legs_not_worker", "update_failed", "too_old_logged", "cc_epoch",
     "last_account_sync", "undo_intent"
   ].map(prefix => `${prefix}:${newPlaidAccountId}`);
   for (const key of stateKeys) {
@@ -391,7 +391,7 @@ export async function migratePlaidAccountIdentity(
 
   const migrationId = crypto.randomUUID();
   const historyKey = `account_migration:${migrationId}`;
-  const record = {
+  const record: any = {
     migration_id: migrationId,
     status: "prepared",
     nickname,
