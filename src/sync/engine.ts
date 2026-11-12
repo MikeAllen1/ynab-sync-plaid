@@ -11,7 +11,7 @@ import { logEvent } from "../store/event-log";
 import { ALREADY_IN_YNAB_DATE_DAYS, CARD_PAYMENT_POSTING_DAYS, WORKER_PENDING_PREFIX, cleanName, daysApart, getCcEpoch, leadingWordMatch, namesConflict, namesSimilar, nextOccurrence, normalizeMerchant, plaidPayeeText, prunePostedMap, seedOccurrenceCounts, shortStableHash, ynabImportId } from "./matching";
 import { accountRefsIn, classifyTransfer, resolveCardForPayment, transferPayeeName, untrackedCardPayee } from "./transfers";
 import { appendUndo, getUndoLog } from "./undo";
-import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
+import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, QuarantinedPlaidTxn, partitionPlaidTxns } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
 import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabGetPlanCurrency, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
@@ -610,6 +610,7 @@ export interface PlaidSyncDeltaBatch {
   modified: PlaidTransaction[];
   removedIds: Set<string>;
   cursor: string;
+  quarantined: QuarantinedPlaidTxn[];
 }
 
 /** Fetch one complete Plaid cursor batch; mutation errors restart from the original cursor. */
@@ -617,6 +618,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
   const added: PlaidTransaction[] = [];
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
+  const quarantined: QuarantinedPlaidTxn[] = [];
   const maxPaginationRestarts = 3;
   let cursor = originalCursor;
   let completed = false;
@@ -624,6 +626,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
     added.length = 0;
     modified.length = 0;
     removedIds.clear();
+    quarantined.length = 0;
     let pageCursor = originalCursor;
     let hasMore = true;
     try {
@@ -634,8 +637,11 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
         if (resp.has_more && resp.next_cursor === pageCursor) {
           throw new Error("Plaid /transactions/sync pagination cursor did not advance");
         }
-        added.push(...resp.added.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
-        modified.push(...resp.modified.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        const mine = (rows: any[]) => partitionPlaidTxns((rows || []).filter((t: any) => t?.account_id === acct.plaid_account_id));
+        const a = mine(resp.added), m = mine(resp.modified);
+        added.push(...a.transactions);
+        modified.push(...m.transactions);
+        quarantined.push(...a.quarantined, ...m.quarantined);
         for (const removed of resp.removed) if (removed.account_id === acct.plaid_account_id) removedIds.add(removed.transaction_id);
         pageCursor = resp.next_cursor;
         hasMore = resp.has_more;
@@ -648,7 +654,7 @@ export async function fetchPlaidSyncDeltas(env: Env, acct: AccountConfig, origin
     }
   }
   if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
-  return { added, modified, removedIds, cursor };
+  return { added, modified, removedIds, cursor, quarantined };
 }
 
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
@@ -678,11 +684,13 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const added: PlaidTransaction[] = [];
   const modified: PlaidTransaction[] = [];
   const removedIds = new Set<string>();
+  const quarantined: QuarantinedPlaidTxn[] = [];
   if (!options.backfillOnly) {
     const batch = await fetchPlaidSyncDeltas(env, acct, cursor);
     added.push(...batch.added);
     modified.push(...batch.modified);
     for (const id of batch.removedIds) removedIds.add(id);
+    quarantined.push(...batch.quarantined);
     cursor = batch.cursor;
   }
 
@@ -705,10 +713,40 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     windowStart = w.start_date;
     windowOk = !w.truncated;
     if (w.truncated) windowNote = `verification window truncated at ${w.transactions.length} transactions; pending retirement paused`;
+    // A quarantined row means the window isn't a complete picture of the account, so
+    // pending rows are not retired on its evidence while that row is in it.
+    const windowQuarantined = (w.quarantined || []).filter(q => q.account_id === pid);
+    if (windowQuarantined.length > 0) {
+      windowOk = false;
+      windowNote = `${windowQuarantined.length} bank transaction(s) set aside as unreadable; pending retirement paused`;
+      for (const q of windowQuarantined) if (!quarantined.some(x => x.transaction_id === q.transaction_id)) quarantined.push(q);
+    }
   } catch (e: any) {
     windowNote = `verification window unavailable (${friendlyErrorMessage(e)}); pending retirement paused`;
   }
   const windowIds = new Set(windowTxns.map(t => t.transaction_id));
+
+  // Quarantined rows: reported once each (Activity, "Needs you"), never imported, and
+  // never allowed to stop the rest of the account or its cursor.
+  if (quarantined.length > 0 && !options.dryRun) {
+    const qKey = `quarantine_logged:${pid}`;
+    const logged: Record<string, string> = await readJson(env, qKey, {});
+    let qChanged = false;
+    for (const q of quarantined) {
+      const id = q.transaction_id || `${q.date}|${q.amount}|${q.name}`;
+      if (logged[id]) continue;
+      logged[id] = todayInTimeZone(env); qChanged = true;
+      logEvent(events, {
+        account: acct.nickname, action: "transaction_quarantined", transaction_id: q.transaction_id || undefined,
+        amount: q.amount == null ? undefined : Math.round(-q.amount * 1000),
+        detail: `${q.name || "Bank transaction"} ${q.date}: the bank sent it in a form the worker can't import safely (${q.reason}). Everything else kept syncing; add this one by hand if it's real.`
+      });
+    }
+    // Forget entries older than the identity horizon so the map can't grow forever.
+    const floor = shiftCalendarDate(todayInTimeZone(env), -IDENTITY_HORIZON_DAYS);
+    for (const [k, d] of Object.entries(logged)) if (d < floor) { delete logged[k]; qChanged = true; }
+    if (qChanged) await env.SYNC_STATE.put(qKey, JSON.stringify(logged));
+  }
 
   // ---- Current state per lifecycle key. Later sources win, posted beats pending. ----
   const current = new Map<string, PlaidTransaction>();
