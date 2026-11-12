@@ -45,7 +45,7 @@ test("YNAB malformed 2xx update response is not reported as a successful zero-ro
   try {
     await assert.rejects(
       ynabUpdateTransactions(env, [{ id: "row-1", cleared: "cleared" }]),
-      /invalid success response.*transaction_ids/
+      /invalid transaction result envelope/
     );
   } finally { globalThis.fetch = originalFetch; }
 });
