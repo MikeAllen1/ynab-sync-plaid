@@ -8,6 +8,16 @@ import { Env } from "../types";
 // + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
+export function retryAfterDelayMs(header: string | null, attempt: number, now = Date.now()): number {
+  if (header !== null && header.trim() !== "") {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.max(0, date - now);
+  }
+  return Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+}
+
 export async function fetchWithRetry(
   url: string,
   init: RequestInit,
@@ -39,25 +49,7 @@ export async function fetchWithRetry(
     // a subsequent financial mutation.
     await keepLeaseAlive();
     if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      const header = resp.headers.get("Retry-After");
-      let requestedMs = 0;
-      let validRetryAfter = false;
-      if (header !== null) {
-        const seconds = Number(header);
-        if (header.trim() !== "" && Number.isFinite(seconds) && seconds >= 0) {
-          requestedMs = seconds * 1000;
-          validRetryAfter = true;
-        } else {
-          const date = Date.parse(header);
-          if (Number.isFinite(date)) {
-            requestedMs = Math.max(0, date - Date.now());
-            validRetryAfter = true;
-          }
-        }
-      }
-      const backoffMs = validRetryAfter
-        ? requestedMs
-        : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+      const backoffMs = retryAfterDelayMs(resp.headers.get("Retry-After"), attempt);
       // Do not shorten a provider-specified delay; defer to the next scheduled
       // execution when it exceeds this Worker request's bounded retry window.
       if (backoffMs > 10000) return resp;
