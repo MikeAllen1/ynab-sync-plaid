@@ -176,7 +176,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     resetRunCache();
     await assert.rejects(
       syncAccountEngine(env, account, [], { trigger: "malformed-page", runId: "run-fault-5" }),
-      /Plaid \/transactions\/sync returned an invalid page/
+      /Plaid \/transactions\/sync returned an invalid response/
     );
 
     assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "malformed pagination metadata must never advance the saved cursor");
