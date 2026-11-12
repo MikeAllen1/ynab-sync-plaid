@@ -7,10 +7,26 @@ export function makeTestSyncLock(initial: Record<string, unknown> = {}): Durable
     get: async (key: string) => data.get(key),
     put: async (key: string, value: unknown) => { data.set(key, value); },
     delete: async (key: string) => data.delete(key),
+    list: async (options: { prefix?: string; limit?: number } = {}) => {
+      const prefix = options.prefix || "";
+      const entries = [...data.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, options.limit ?? Infinity);
+      return new Map(entries);
+    },
     transaction: async (fn: (txn: any) => Promise<any>) => fn({
       get: async (key: string) => data.get(key),
       put: async (key: string, value: unknown) => { data.set(key, value); },
-      delete: async (key: string) => data.delete(key)
+      delete: async (key: string) => data.delete(key),
+      list: async (options: { prefix?: string; limit?: number } = {}) => {
+        const prefix = options.prefix || "";
+        const entries = [...data.entries()]
+          .filter(([key]) => key.startsWith(prefix))
+          .sort(([a], [b]) => a.localeCompare(b))
+          .slice(0, options.limit ?? Infinity);
+        return new Map(entries);
+      }
     })
   };
   const durableObject = new SyncLock({ storage } as unknown as DurableObjectState);
