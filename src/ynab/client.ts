@@ -76,7 +76,7 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
 
   const updatedIds = data?.data?.transaction_ids;
   if (!Array.isArray(updatedIds) || !updatedIds.every((id: unknown) => typeof id === "string")) {
-    throw new Error("YNAB update returned HTTP success with an invalid transaction result envelope; update outcome is unknown.");
+    throw new Error("YNAB update returned an invalid transaction result envelope: transaction_ids is required and must be an array of strings; update outcome is unknown.");
   }
   const confirmed = new Set(updatedIds);
   const missing = updates.map(u => String(u.id)).filter(id => !confirmed.has(id));
@@ -93,26 +93,64 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
 // Updates in one request; if YNAB refuses the batch, retry row by row so one bad row
 // (a split parent whose amount can't change, say) doesn't block every other update
 // and retirement for the account. Rows that still fail are returned, not thrown.
+function ynabRowMatchesUpdate(row: any, update: any): boolean {
+  if (!row || row.id !== update.id) return false;
+  for (const [key, value] of Object.entries(update)) {
+    if (key === "id" || key === "import_id") continue;
+    if (JSON.stringify(row[key]) !== JSON.stringify(value)) return false;
+  }
+  return true;
+}
+
+// Apply definitive validation rejections row-by-row. For ambiguous outcomes,
+// read back every row first, then patch only rows whose requested fields are not
+// present. A lost response after commit is therefore recovered without blindly
+// replaying the batch or duplicating a financial mutation.
 export async function ynabUpdateEach(env: Env, updates: any[]): Promise<{ updated: number; failed: { id: string; error: string }[] }> {
   if (updates.length === 0) return { updated: 0, failed: [] };
   try {
     return { ...(await ynabUpdateTransactions(env, updates)), failed: [] };
   } catch (batchError: any) {
     const message = String(batchError?.message || batchError);
-    // Row-by-row fallback is safe only when YNAB definitively rejected the batch
-    // as invalid. A timeout, 5xx, malformed success body, or other ambiguous result
-    // may mean the whole batch committed; replaying individual PATCHes could apply
-    // unintended second-stage changes.
-    if (!/^YNAB update failed: 400\b/.test(message)) throw batchError;
-    if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: message }] };
+    if (/^YNAB update failed: 400\b/.test(message)) {
+      if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: message }] };
+      let updated = 0;
+      const failed: { id: string; error: string }[] = [];
+      for (const update of updates) {
+        try { updated += (await ynabUpdateTransactions(env, [update])).updated; }
+        catch (error: any) { failed.push({ id: update.id, error: String(error?.message || error) }); }
+      }
+      return { updated, failed };
+    }
+
+    // The batch may have committed before its response was lost. Read back all
+    // requested rows before deciding which individual PATCHes are still needed.
+    let currentRows: Array<YNABExistingTransaction | null>;
+    try {
+      currentRows = await Promise.all(updates.map(update => ynabGetTransaction(env, String(update.id))));
+    } catch {
+      throw batchError;
+    }
+    let updated = 0;
+    const failed: { id: string; error: string }[] = [];
+    for (let index = 0; index < updates.length; index++) {
+      const update = updates[index];
+      if (ynabRowMatchesUpdate(currentRows[index], update)) {
+        updated++;
+        continue;
+      }
+      try {
+        updated += (await ynabUpdateTransactions(env, [update])).updated;
+      } catch (error: any) {
+        // A single-row PATCH can also lose its response; confirm its final state
+        // before reporting failure. If read-back fails, preserve the unknown outcome.
+        const after = await ynabGetTransaction(env, String(update.id));
+        if (ynabRowMatchesUpdate(after, update)) updated++;
+        else failed.push({ id: update.id, error: String(error?.message || error) });
+      }
+    }
+    return { updated, failed };
   }
-  let updated = 0;
-  const failed: { id: string; error: string }[] = [];
-  for (const u of updates) {
-    try { updated += (await ynabUpdateTransactions(env, [u])).updated; }
-    catch (e: any) { failed.push({ id: u.id, error: String(e?.message || e) }); }
-  }
-  return { updated, failed };
 }
 
 export async function ynabGetAccounts(env: Env): Promise<YNABAccountSummary[]> {
