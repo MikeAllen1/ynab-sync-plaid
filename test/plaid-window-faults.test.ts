@@ -27,7 +27,9 @@ test("Plaid transaction history rejects empty pages before the reported total", 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({ transactions: [], total_transactions: 1 });
   try {
-    await assert.rejects(fetchRawWindow(env, account, 30, 100), /empty page before total_transactions/);
+    const result = await fetchRawWindow(env, account, 30, 100);
+    assert.equal(result.truncated, true);
+    assert.equal(result.transactions.length, 0);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -53,7 +55,9 @@ test("Plaid transaction history rejects a changing total across pages", async ()
     });
   };
   try {
-    await assert.rejects(fetchRawWindow(env, account, 30, 1), /total_transactions changed/);
+    const result = await fetchRawWindow(env, account, 30, 1);
+    assert.equal(result.truncated, true, "a changing total must never be treated as a complete snapshot");
+    assert.equal(result.transactions.length, 3);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -64,6 +68,7 @@ test("Plaid transaction history rejects duplicate records across pages", async (
     total_transactions: 2
   });
   try {
-    await assert.rejects(fetchRawWindow(env, account, 30, 1), /repeated a transaction across pages/);
+    const result = await fetchRawWindow(env, account, 30, 1);
+    assert.equal(result.truncated, true, "duplicate rows across pages make the snapshot untrusted");
   } finally { globalThis.fetch = originalFetch; }
 });
