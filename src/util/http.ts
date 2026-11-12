@@ -9,13 +9,14 @@ import { Env } from "../types";
 // writes (POST/PATCH/DELETE) are never retried blindly: a timeout/5xx can occur
 // after the server committed the mutation.
 export async function fetchWithRetry(
-  url: string, init: RequestInit, retries = 2, options: { retrySafe?: boolean } = {}
+  url: string, init: RequestInit, retries = 2, options: { retrySafe?: boolean; beforeAttempt?: () => Promise<void> } = {}
 ): Promise<Response> {
   const method = String(init.method || "GET").toUpperCase();
   const safeToRetry = options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
+    if (options.beforeAttempt) await options.beforeAttempt();
     const resp = await fetch(url, init);
     if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
       const header = resp.headers.get("Retry-After");
