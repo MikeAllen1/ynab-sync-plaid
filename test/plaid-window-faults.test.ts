@@ -23,7 +23,7 @@ test("Plaid transaction history rejects missing pagination collections", async (
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("Plaid transaction history rejects empty pages before the reported total", async () => {
+test("Plaid transaction history marks empty pages before the reported total as incomplete", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({ transactions: [], total_transactions: 1 });
   try {
