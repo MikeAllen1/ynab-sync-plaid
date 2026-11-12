@@ -21,6 +21,7 @@ export function setupHtml(): string {
     input, select { width: 100%; padding: 9px 10px; font: inherit; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: var(--text); }
     .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
     .row .name { flex: 1; font-weight: 600; }
+    .fit-content { width:auto; }
     button { padding: 9px 16px; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: var(--primary); color: #fff; cursor: pointer; }
     button[disabled] { opacity: .5; }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 10px; display: grid; gap: 8px; }
@@ -136,7 +137,7 @@ function onLinked(publicToken, metadata) {
       return '<div class="card" data-plaid="' + esc(a.account_id) + '" data-link="' + esc(ex.link_id) + '" data-institution="' + esc(institution) + '" data-mask="' + esc(a.mask || "") + '"><strong>' + esc(a.name) + " ····" + esc(a.mask || "") + " <span class='muted'>(" + esc(a.subtype || a.type) + ")</span></strong>" +
         '<div class="grid"><input data-f="nickname" placeholder="Nickname, e.g. amex" />' +
         '<select data-f="ynab"><option value="">Choose YNAB account…</option>' + options + "</select></div>" +
-        '<label class="muted"><input type="checkbox" data-f="card" style="width:auto"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
+        '<label class="muted"><input type="checkbox" data-f="card" class="fit-content"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
         '<button data-action="add-account">Add this account</button></div>';
     }).join("");
     setStatus("Choose the accounts to sync. Each one starts syncing on the next run.", true);
@@ -194,6 +195,16 @@ function loadBanks() {
   }
 })();
 get("/session").then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
+
+document.addEventListener("click", function (event) {
+  var target = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+  if (!target) return;
+  switch (target.getAttribute("data-action")) {
+    case "add-bank": addBank(); break;
+    case "add-account": addAccount(target); break;
+  }
+});
+
 </script>
 </body>
 </html>`;
