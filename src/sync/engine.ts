@@ -585,6 +585,55 @@ export function buildOwnership(
 // windowImport: "all" creates rows for anything in the account's import window (the
 // backfill safety net); "pending" only pending rows (bootstrap); "none" uses the window
 // only to verify what is still pending.
+
+export interface PlaidSyncDeltaBatch {
+  added: PlaidTransaction[];
+  modified: PlaidTransaction[];
+  removedIds: Set<string>;
+  cursor: string;
+}
+
+/** Fetch a complete Plaid cursor batch. A mutation error invalidates every page
+ * from that attempt, so the entire sequence restarts from the original cursor. */
+export async function fetchPlaidSyncDeltas(
+  env: Env,
+  acct: AccountConfig,
+  originalCursor: string
+): Promise<PlaidSyncDeltaBatch> {
+  const added: PlaidTransaction[] = [];
+  const modified: PlaidTransaction[] = [];
+  const removedIds = new Set<string>();
+  const maxPaginationRestarts = 3;
+  let cursor = originalCursor;
+  let completed = false;
+  for (let attempt = 0; attempt <= maxPaginationRestarts && !completed; attempt++) {
+    added.length = 0;
+    modified.length = 0;
+    removedIds.clear();
+    let pageCursor = originalCursor;
+    let hasMore = true;
+    try {
+      while (hasMore) {
+        const resp = await plaidCall(env, "/transactions/sync", {
+          access_token: acct.plaid_access_token, cursor: pageCursor, count: 500
+        });
+        added.push(...resp.added.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        modified.push(...resp.modified.filter((t: any) => t.account_id === acct.plaid_account_id).map(normalizePlaidTxn));
+        for (const removed of resp.removed) if (removed.account_id === acct.plaid_account_id) removedIds.add(removed.transaction_id);
+        pageCursor = resp.next_cursor;
+        hasMore = resp.has_more;
+      }
+      cursor = pageCursor;
+      completed = true;
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      if (!message.includes("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION") || attempt === maxPaginationRestarts) throw error;
+    }
+  }
+  if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
+  return { added, modified, removedIds, cursor };
+}
+
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
   const isCard = isCreditCardAccount(acct);
   const pid = acct.plaid_account_id;
@@ -609,38 +658,15 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const ctx = await loadRoutingContext(env, !!options.dryRun);
 
   // ---- Plaid: cursor deltas ----
-  const added: PlaidTransaction[] = [];
-  const modified: PlaidTransaction[] = [];
-  const removedIds = new Set<string>();
+  let added: PlaidTransaction[] = [];
+  let modified: PlaidTransaction[] = [];
+  let removedIds = new Set<string>();
   if (!options.backfillOnly) {
-    const originalCursor = cursor;
-    const maxPaginationRestarts = 3;
-    let completed = false;
-    for (let attempt = 0; attempt <= maxPaginationRestarts && !completed; attempt++) {
-      // A mutation-during-pagination invalidates the entire page sequence. Discard
-      // every partial result and restart from the cursor supplied to page one.
-      added.length = 0;
-      modified.length = 0;
-      removedIds.clear();
-      let pageCursor = originalCursor;
-      let hasMore = true;
-      try {
-        while (hasMore) {
-          const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor: pageCursor, count: 500 });
-          added.push(...resp.added.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-          modified.push(...resp.modified.filter((t: any) => t.account_id === pid).map(normalizePlaidTxn));
-          for (const r of resp.removed) if (r.account_id === pid) removedIds.add(r.transaction_id);
-          pageCursor = resp.next_cursor;
-          hasMore = resp.has_more;
-        }
-        cursor = pageCursor;
-        completed = true;
-      } catch (error: any) {
-        const message = String(error?.message || error);
-        if (!message.includes("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION") || attempt === maxPaginationRestarts) throw error;
-      }
-    }
-    if (!completed) throw new Error("Plaid transaction pagination did not complete; cursor was not advanced.");
+    const batch = await fetchPlaidSyncDeltas(env, acct, cursor);
+    added = batch.added;
+    modified = batch.modified;
+    removedIds = batch.removedIds;
+    cursor = batch.cursor;
   }
 
   // ---- Plaid: current state of the verification window (read-only) ----
