@@ -128,6 +128,10 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
   }
 
   for (const acct of accounts) {
+    // "Sync now" for one account reports on that account only. (This check used to
+    // come after the pause and sync-off checks, so a one-account sync also listed
+    // every other switched-off account as "skipped", which read as if it had tried.)
+    if (options.onlyAccount && acct.nickname !== options.onlyAccount) continue;
     try {
       if (lock) await renewSyncLock(env, lock);
       const accountSetting = settingForAccount(accountSettings, acct);
@@ -144,8 +148,6 @@ export async function runSyncAll(env: Env, options: SyncOptions, lock: LockHandl
         results.push({ account: acct.nickname, status: "skipped - account sync off", automation: accountSetting });
         continue;
       }
-
-      if (options.onlyAccount && acct.nickname !== options.onlyAccount) continue;
 
       const bootstrapped = await env.SYNC_STATE.get(`bootstrapped:${acct.plaid_account_id}`);
       if (bootstrapped && isAutomaticTrigger(options.trigger)) {
