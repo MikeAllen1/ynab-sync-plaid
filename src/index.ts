@@ -117,7 +117,7 @@ export const workerEntry = {
       const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
       const doResponse = await stub.fetch("https://sync-lock/readiness", { method: "GET" });
       if (!doResponse.ok) return json({ ok: false, error: "Durable Object readiness probe failed" }, 503);
-      const kvResponse = await env.SYNC_STATE.get("__security_readiness_probe");
+      await env.SYNC_STATE.get("__security_readiness_probe");
       const doResult: any = await doResponse.json();
       return json({ ok: doResult.ok === true, bindings: { SYNC_STATE: true, SYNC_LOCK: true }, durable_object: doResult, kv_readable: true }, doResult.ok === true ? 200 : 503);
     }
@@ -608,7 +608,7 @@ export const workerEntry = {
         .replace(/<style(?![^>]*\bnonce=)/gi, '<style nonce="' + nonce + '"');
       return new Response(html, { headers: {
         "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
-        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "' https://cdn.plaid.com; script-src-attr 'none'; style-src 'self' 'nonce-" + nonce + "'; style-src-elem 'self' 'nonce-" + nonce + "'; style-src-attr 'none'; img-src 'self' data: https:; connect-src 'self' https://*.plaid.com; frame-src https://*.plaid.com; font-src 'self' data:"
+        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "' https://cdn.plaid.com/link/v2/stable/link-initialize.js; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-elem 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://production.plaid.com; frame-src https://cdn.plaid.com; font-src 'self' data:"
       } });
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
