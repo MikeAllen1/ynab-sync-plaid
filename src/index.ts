@@ -36,7 +36,7 @@ import { claimPlaidWebhook, configurePlaidWebhooks, forcePlaidRefresh, handlePla
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
@@ -630,7 +630,6 @@ export const workerEntry = {
             item_id: a.item_id || "",
             is_credit_card: !!a.is_credit_card,
             payment_match: a.payment_match || builtinPaymentMatch(a.nickname) || null,
-            token_preview: maskToken(a.plaid_access_token),
             has_token: !!a.plaid_access_token
           }))
         });
