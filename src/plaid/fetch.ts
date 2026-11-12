@@ -143,7 +143,7 @@ export async function fetchRawWindow(
     if (total === null) total = pageTotal;
     else if (pageTotal !== total) throw new Error("Plaid /transactions/get total_transactions changed during pagination; verification snapshot is inconsistent.");
     if (page.length > pageSize) throw new Error("Plaid /transactions/get returned more rows than the requested page size.");
-    if (page.length === 0 && collected.length < total) throw new Error("Plaid /transactions/get returned an empty page before the reported total was reached.");
+    if (page.length === 0 && total !== null && collected.length < total) throw new Error("Plaid /transactions/get returned an empty page before the reported total was reached.");
     for (const raw of page) {
       if (!raw || typeof raw.transaction_id !== "string" || !raw.transaction_id) throw new Error("Plaid /transactions/get returned a row without a transaction ID.");
       if (seenIds.has(raw.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages; verification snapshot is inconsistent.");
