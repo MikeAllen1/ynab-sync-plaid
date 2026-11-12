@@ -76,7 +76,7 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
 
   const updatedIds = data?.data?.transaction_ids;
   if (!Array.isArray(updatedIds) || !updatedIds.every((id: unknown) => typeof id === "string")) {
-    throw new Error("YNAB update returned HTTP success with an invalid transaction result envelope; update outcome is unknown.");
+    throw new Error("YNAB update returned an invalid success response: transaction_ids is required and must be an array of strings; update outcome is unknown.");
   }
   const confirmed = new Set(updatedIds);
   const missing = updates.map(u => String(u.id)).filter(id => !confirmed.has(id));
