@@ -151,7 +151,7 @@ export async function fetchRawWindow(
       total = plaid.total_transactions;
       if (page.some((t: any) => !t || typeof t.transaction_id !== "string" || !t.transaction_id ||
           typeof t.account_id !== "string" || !t.account_id ||
-          typeof t.date !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(t.date) ||
+          typeof t.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) ||
           typeof t.amount !== "number" || !Number.isFinite(t.amount))) {
         throw new Error("Plaid /transactions/get returned a malformed transaction");
       }
