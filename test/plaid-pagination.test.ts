@@ -30,7 +30,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   };
   try {
     const result = await fetchRawWindow(env, account, 30, 2);
-    assert.deepEqual(offsets, [0, 2]);
+    assert.deepEqual(offsets, [0, 2, 0, 2], "multi-page snapshots are independently re-read before they are trusted");
     assert.deepEqual(result.transactions.map(t => t.transaction_id), ["p1", "p2", "p3"]);
     assert.equal(result.truncated, false);
   } finally {

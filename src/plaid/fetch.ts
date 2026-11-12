@@ -149,9 +149,12 @@ export async function fetchRawWindow(
       const page = plaid.transactions;
       if (total >= 0 && plaid.total_transactions !== total) stable = false;
       total = plaid.total_transactions;
-      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" ||
-          typeof t.account_id !== "string" || typeof t.date !== "string" ||
-          typeof t.amount !== "number" || !Number.isFinite(t.amount))) stable = false;
+      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" || !t.transaction_id ||
+          typeof t.account_id !== "string" || !t.account_id ||
+          typeof t.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) ||
+          typeof t.amount !== "number" || !Number.isFinite(t.amount))) {
+        throw new Error("Plaid /transactions/get returned a malformed transaction");
+      }
       if (page.length === 0 && offset < total) { stable = false; break; }
       if (page.length > pageSize || offset + page.length > total) { stable = false; break; }
       for (const transaction of page) {
@@ -173,7 +176,7 @@ export async function fetchRawWindow(
   // it to retire pending YNAB rows.
   const first = await readPass();
   let stable = first.stable;
-  if (first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
+  if (first.stable && first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
     const second = await readPass();
     const signature = (rows: any[]) => rows.map(t => [
       t.transaction_id, t.pending_transaction_id || "", t.account_id, t.date,

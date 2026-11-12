@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { syncAccountEngine } from "../src/sync/engine";
 import { resetRunCache } from "../src/plaid/fetch";
 import type { Env } from "../src/types";
+import { makeTestSyncLock } from "./durable-object-fixture";
 
 test("full sync lifecycle converts one pending charge to posted in the same YNAB row", async () => {
   const account = {
@@ -45,6 +46,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     YNAB_TOKEN: "ynab-token",
     YNAB_BUDGET_ID: "budget-id",
     TIMEZONE: "UTC",
+    SYNC_LOCK: makeTestSyncLock(),
     SYNC_STATE: {
       get: async (key: string) => state.get(key) ?? null,
       put: async (key: string, value: string) => { state.set(key, value); },

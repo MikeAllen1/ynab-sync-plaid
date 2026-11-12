@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rollbackSync } from "../src/sync/undo";
+import { getUndoLog, rollbackSync } from "../src/sync/undo";
+import { makeTestSyncLock } from "./durable-object-fixture";
 import type { Env } from "../src/types";
 
 const account = {
@@ -12,20 +13,21 @@ const account = {
 };
 
 function makeEnv(rows: any[], batchItems: any[]) {
-  const values = new Map<string, string>([
-    ["undo_log", JSON.stringify([{
-      ts: "2026-11-11T12:00:00.000Z",
-      trigger: "test",
-      run_id: "run-1",
-      count: batchItems.length,
-      items: batchItems
-    }])]
-  ]);
+  const batch = {
+    ts: "2026-11-11T12:00:00.000Z",
+    trigger: "test",
+    run_id: "run-1",
+    count: batchItems.length,
+    items: batchItems
+  };
+  const values = new Map<string, string>();
+  const syncLock = makeTestSyncLock({ "history:undo_log": [batch] });
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
     YNAB_TOKEN: "test-token",
     YNAB_BUDGET_ID: "test-budget",
     TIMEZONE: "UTC",
+    SYNC_LOCK: syncLock,
     SYNC_STATE: {
       get: async (key: string) => values.get(key) ?? null,
       put: async (key: string, value: string) => { values.set(key, value); },
@@ -82,7 +84,7 @@ test("undo retains only failed deletions so the operation can be retried safely"
     assert.equal(result.deleted, 1);
     assert.equal(result.errors.length, 1);
     assert.equal(result.errors[0].id, "delete-fails");
-    const remaining = JSON.parse(values.get("undo_log") || "[]");
+    const remaining = await getUndoLog(env);
     assert.equal(remaining.length, 1);
     assert.deepEqual(remaining[0].items.map((x: any) => x.id), ["delete-fails"]);
     assert.equal(remaining[0].count, 1);
