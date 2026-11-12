@@ -85,7 +85,7 @@ export function normalizePlaidTxn(t: any): PlaidTransaction {
   if (!t || typeof t.transaction_id !== "string" || !t.transaction_id ||
       typeof t.account_id !== "string" || !t.account_id ||
       typeof t.amount !== "number" || !Number.isFinite(t.amount) ||
-      typeof t.date !== "string" || !/\d{4}-\d{2}-\d{2}$/.test(t.date) ||
+      typeof t.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) ||
       typeof t.pending !== "boolean") {
     throw new Error("Plaid transaction is missing required identity, amount, date, or pending fields.");
   }
