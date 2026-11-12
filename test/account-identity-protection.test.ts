@@ -102,3 +102,13 @@ test("two Plaid accounts cannot be routed into the same YNAB destination", async
     /mapped more than once/
   );
 });
+
+test("explicit Plaid identity migration refuses an ID with cached account metadata", async () => {
+  const env = envWithAccount();
+  await env.SYNC_STATE.put("plaid_masks", JSON.stringify({ "plaid-new": "1234" }));
+  await assert.rejects(
+    migratePlaidAccountIdentity(env, "checking", "new-token", "plaid-new", "item-2", "ynab-account"),
+    /already has saved account metadata/
+  );
+  assert.equal(JSON.parse((await env.SYNC_STATE.get("account_map"))!)[0].plaid_account_id, "plaid-old");
+});
