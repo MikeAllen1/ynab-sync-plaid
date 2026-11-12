@@ -14,7 +14,7 @@ import { appendUndo, getUndoLog } from "./undo";
 import { AccountAutomationSetting, AccountConfig, Env, PlaidTransaction, SkipRule, SkippedIncomeRecord, SyncOptions, YNABExistingTransaction, YNABTransaction, normalizePlaidTxn } from "../types";
 import { calendarDaysBetween, todayInTimeZone } from "../util/dates";
 import { friendlyErrorMessage, plainYnabError, safePayee } from "../util/errors";
-import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabUpdateEach, ynabUpsert } from "../ynab/client";
+import { ynabDeleteTransaction, ynabGetAccountTransactions, ynabGetAccounts, ynabGetTransaction, ynabUpdateEach, ynabUpsert, ynabVerifyTransferPair } from "../ynab/client";
 
 // ================= SYNC ENGINE (identity-first, shared by checking and cards) =================
 //
@@ -1327,6 +1327,23 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!options.dryRun) await env.SYNC_STATE.put(undoIntentKey, JSON.stringify({ run_id: options.runId || "", trigger: options.trigger || "unknown", import_ids: creates.map(c => c.import_id) }));
     createdResult = await ynabUpsert(env, creates);
     rejected.push(...(createdResult.duplicate_import_ids || []));
+    // A transfer write is not considered complete until both YNAB register rows
+    // exist and point at one another with opposite milliunit amounts. The pre-write
+    // undo intent remains in KV if this read-back fails, and the Plaid cursor is not
+    // advanced; the next run can safely re-read and recover the created row.
+    const transferCreates = creates.filter(c => !!c.payee_id);
+    if (transferCreates.length > 0) {
+      const afterTransfers = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+      const byImportId = new Map(afterTransfers.filter(r => r.import_id).map(r => [r.import_id as string, r]));
+      for (const transfer of transferCreates) {
+        const target = ctx.accounts.find(a => ctx.accountPayeeByNickname[a.nickname] === transfer.payee_id);
+        const sourceRow = byImportId.get(transfer.import_id);
+        if (!target || !sourceRow) {
+          throw new Error(`YNAB transfer verification failed: could not resolve the created transfer ${transfer.import_id} to its source and destination accounts.`);
+        }
+        await ynabVerifyTransferPair(env, sourceRow.id, acct.ynab_account_id, target.ynab_account_id, transfer.amount);
+      }
+    }
     // YNAB can save the rows and still answer with an error (a timeout); the retry
     // then reports them as duplicates. An id that wasn't in YNAB before this run but
     // is there now was created by this run, not refused.
