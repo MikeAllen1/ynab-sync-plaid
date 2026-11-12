@@ -46,7 +46,7 @@ export function setupHtml(): string {
 
   <h2>Add a bank</h2>
   <p class="muted">Link the bank, then choose which of its accounts to sync and the YNAB account each one feeds. Before the first sync, set the YNAB account's starting balance to the bank's posted balance.</p>
-  <button id="addBtn">Link a new bank</button>
+  <button id="addBtn" data-action="add-bank">Link a new bank</button>
   <div id="newAccounts"></div>
   <div id="status"></div>
 
