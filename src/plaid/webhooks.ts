@@ -2,7 +2,7 @@ import { runItemHealthCheck } from "../health/items";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "./client";
 import { getEnabledAccounts } from "../store/accounts";
-import { syncAll } from "../sync/run";
+import { markItemDue, syncAll } from "../sync/run";
 import { AccountConfig, Env } from "../types";
 import { friendlyErrorMessage } from "../util/errors";
 import { constantTimeEqual } from "../util/http";
@@ -190,7 +190,16 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     environment: body.environment || null
   };
 
-  await appendWebhookHistory(env, event);
+  // Claim the exact signed payload atomically so Plaid retries cannot launch
+  // duplicate syncs or duplicate item-health actions.
+  const receipt = await claimWebhookReceipt(env, rawBody);
+  if (!receipt.claimed) return { ok: true, action: "duplicate_ignored", duplicate: true, event };
+  try {
+    await appendWebhookHistory(env, event);
+  } catch (error) {
+    await releaseWebhookReceipt(env, receipt.digest).catch(() => {});
+    throw error;
+  }
 
   const transactionWebhookCodesThatShouldSync = [
     "SYNC_UPDATES_AVAILABLE",
@@ -208,9 +217,35 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     // passing the item through, the cron tick that asked Plaid to refresh a minute
     // earlier has just stamped the account as synced, the frequency gate says "not
     // due", and the data waits a full interval.
-    const webhookItemId = body.webhook_code === "SYNC_UPDATES_AVAILABLE" && body.item_id ? String(body.item_id) : undefined;
-    ctx.waitUntil(syncAll(env, { trigger: `webhook:${body.webhook_code}`, webhookItemId }));
-    return { ok: true, action: "sync_started", event };
+    const webhookItemId = body.item_id ? String(body.item_id) : undefined;
+    // Webhook delivery is only a trigger, not a durable job queue. Cloudflare may
+    // terminate waitUntil work; the scheduled full sync is the recovery backstop.
+    // Record failures and make this item due so the next cron run does not suppress
+    // recovery behind the normal per-account frequency gate.
+    ctx.waitUntil((async () => {
+      try {
+        const result = await syncAll(env, { trigger: `webhook:${body.webhook_code}`, webhookItemId });
+        if (result?.status === "completed_with_errors" || result?.status === "completed_partial" ||
+            result?.status === "lock_unavailable") {
+          if (webhookItemId) await markItemDue(env, webhookItemId);
+          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+            ts: new Date().toISOString(), webhook_code: body.webhook_code,
+            item_id: webhookItemId || null, status: result.status
+          }));
+        } else if (result?.status === "completed") {
+          await env.SYNC_STATE.delete("last_webhook_sync_failure");
+        }
+      } catch (error: any) {
+        try {
+          if (webhookItemId) await markItemDue(env, webhookItemId);
+          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+            ts: new Date().toISOString(), webhook_code: body.webhook_code,
+            item_id: webhookItemId || null, error: friendlyErrorMessage(error)
+          }));
+        } catch { /* cron's full sync remains the final recovery path */ }
+      }
+    })());
+    return { ok: true, action: "sync_scheduled", event };
   }
 
   // Connection problems (ERROR, PENDING_EXPIRATION, LOGIN_REPAIRED...) re-check
@@ -220,18 +255,47 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     // PENDING_EXPIRATION is Plaid's advance warning that a login will expire soon;
     // /item/get shows no error until it actually does, so remember the warning.
     // A repaired login (LOGIN_REPAIRED) or a new consent clears it.
-    if (body.item_id) {
-      if (body.webhook_code === "PENDING_EXPIRATION" || body.webhook_code === "PENDING_DISCONNECT") {
-        await env.SYNC_STATE.put(`item_pending_expiration:${body.item_id}`, new Date().toISOString());
-      } else if (body.webhook_code === "LOGIN_REPAIRED") {
-        await env.SYNC_STATE.delete(`item_pending_expiration:${body.item_id}`);
+    try {
+      if (body.item_id) {
+        if (body.webhook_code === "PENDING_EXPIRATION" || body.webhook_code === "PENDING_DISCONNECT") {
+          await env.SYNC_STATE.put(`item_pending_expiration:${body.item_id}`, new Date().toISOString());
+        } else if (body.webhook_code === "LOGIN_REPAIRED") {
+          await env.SYNC_STATE.delete(`item_pending_expiration:${body.item_id}`);
+        }
       }
+      ctx.waitUntil(runItemHealthCheck(env, true).catch(() => {}));
+    } catch (error) {
+      await releaseWebhookReceipt(env, receipt.digest).catch(() => {});
+      throw error;
     }
-    ctx.waitUntil(runItemHealthCheck(env, true).catch(() => {}));
     return { ok: true, action: "item_health_check_started", event };
   }
 
   return { ok: true, action: "recorded_only", event };
+}
+
+
+export async function claimWebhookReceipt(env: Env, rawBody: string): Promise<{ claimed: boolean; digest: string }> {
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for webhook replay protection");
+  const digest = await sha256Hex(rawBody);
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/webhook/claim", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ digest, ttl_seconds: 600 })
+  });
+  if (!response.ok) throw new Error(`Atomic webhook receipt claim failed (${response.status})`);
+  const data: any = await response.json();
+  if (typeof data.claimed !== "boolean") throw new Error("Atomic webhook receipt claim returned an invalid response");
+  return { claimed: data.claimed, digest };
+}
+
+export async function releaseWebhookReceipt(env: Env, digest: string): Promise<void> {
+  if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for webhook replay protection");
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/webhook/release", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ digest })
+  });
+  if (!response.ok) throw new Error(`Atomic webhook receipt release failed (${response.status})`);
 }
 
 export async function appendWebhookHistory(env: Env, event: any): Promise<void> {
