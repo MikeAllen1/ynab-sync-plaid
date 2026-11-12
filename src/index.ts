@@ -610,7 +610,7 @@ export const workerEntry = {
         .replace(/<style(?![^>]*\bnonce=)/gi, '<style nonce="' + nonce + '"');
       return new Response(html, { headers: {
         "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...NO_FRAMING,
-        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "' https://cdn.plaid.com/link/v2/stable/link-initialize.js; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-elem 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://production.plaid.com; frame-src https://cdn.plaid.com; font-src 'self' data: https://cdn.plaid.com"
+        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'nonce-" + nonce + "' https://cdn.plaid.com/link/v2/stable/link-initialize.js; script-src-attr 'none'; style-src 'nonce-" + nonce + "'; style-src-elem 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; img-src 'self' data: https://cdn.plaid.com; connect-src 'self' https://production.plaid.com; frame-src https://cdn.plaid.com; font-src 'self' data: https://cdn.plaid.com"
       } });
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
