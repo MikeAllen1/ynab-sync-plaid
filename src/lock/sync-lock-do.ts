@@ -21,6 +21,17 @@ export class SyncLock {
     const ttlMs = SYNC_LOCK_TTL_SECONDS * 1000;
 
 
+    if (url.pathname === "/readiness" && request.method === "GET") {
+      const key = "__security_readiness_probe";
+      const storageOk = await this.state.storage.transaction(async txn => {
+        await txn.put(key, now);
+        const value = await txn.get<number>(key);
+        await txn.delete(key);
+        return value === now;
+      });
+      return Response.json({ ok: storageOk, class: "SyncLock", storage: "available" }, { status: storageOk ? 200 : 503 });
+    }
+
     if (url.pathname.startsWith("/session/") && request.method === "POST") {
       let body: any;
       try { body = await request.json(); } catch { return Response.json({ error: "invalid session request" }, { status: 400 }); }
