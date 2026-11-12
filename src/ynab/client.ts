@@ -220,3 +220,33 @@ export async function ynabDeleteTransaction(env: Env, transactionId: string): Pr
 
   return data;
 }
+
+
+/** Read back both sides of a YNAB transfer and verify reciprocal pairing. */
+export async function ynabVerifyTransferPair(env: Env, transactionId: string, sourceAccountId: string, targetAccountId: string, expectedAmount: number): Promise<void> {
+  const source = await ynabGetTransaction(env, transactionId);
+  if (!source) throw new Error(`YNAB transfer verification failed: source transaction ${transactionId} is missing.`);
+  if (source.account_id !== sourceAccountId || Number(source.amount) !== expectedAmount || !source.transfer_transaction_id || source.transfer_account_id !== targetAccountId) {
+    throw new Error(`YNAB transfer verification failed: source transaction ${transactionId} is not paired to the expected account and amount.`);
+  }
+  const target = await ynabGetTransaction(env, source.transfer_transaction_id);
+  if (!target || target.id !== source.transfer_transaction_id || target.account_id !== targetAccountId || target.transfer_account_id !== sourceAccountId || target.transfer_transaction_id !== source.id || Number(target.amount) !== -expectedAmount) {
+    throw new Error(`YNAB transfer verification failed: paired transaction for ${transactionId} is missing or inconsistent.`);
+  }
+}
+
+/** Read the destination plan's configured ISO currency, cached for this Worker run. */
+export async function ynabGetPlanCurrency(env: Env): Promise<string> {
+  const cacheKey = "ynab_plan_currency";
+  const cached = runCache.get(cacheKey);
+  if (cached) return cached;
+  const resp = await fetchWithRetry(`https://api.ynab.com/v1/plans/${encodeURIComponent(env.YNAB_BUDGET_ID)}/settings`, {
+    method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` }
+  });
+  const data: any = await readJsonBody(resp);
+  if (!resp.ok) throw new Error(`YNAB plan settings failed: ${resp.status} - ${JSON.stringify(data)}`);
+  const currency = data?.data?.settings?.currency_format?.iso_code;
+  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) throw new Error("YNAB plan settings returned no valid ISO currency code; transaction writes were blocked.");
+  runCache.set(cacheKey, currency);
+  return currency;
+}
