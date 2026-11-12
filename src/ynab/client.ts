@@ -29,12 +29,16 @@ export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Pro
   if (!resp.ok) {
     throw new Error(`YNAB upsert failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
+  if (!data?.data || !Array.isArray(data.data.transaction_ids) ||
+      !Array.isArray(data.data.duplicate_import_ids)) {
+    throw new Error("YNAB upsert returned an invalid success response; transaction_ids and duplicate_import_ids are required");
+  }
 
   return {
-    added: data.data?.transaction_ids?.length || 0,
-    duplicates: data.data?.duplicate_import_ids?.length || 0,
-    created_ids: data.data?.transaction_ids || [],
-    duplicate_import_ids: data.data?.duplicate_import_ids || []
+    added: data.data.transaction_ids.length,
+    duplicates: data.data.duplicate_import_ids.length,
+    created_ids: data.data.transaction_ids,
+    duplicate_import_ids: data.data.duplicate_import_ids
   };
 }
 
@@ -63,7 +67,10 @@ export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<
   }
 
   const updatedIds = data.data?.transaction_ids;
-  return { updated: Array.isArray(updatedIds) ? updatedIds.length : 0 };
+  if (!Array.isArray(updatedIds)) {
+    throw new Error("YNAB update returned an invalid success response: data.transaction_ids is required");
+  }
+  return { updated: updatedIds.length };
 }
 
 
@@ -109,7 +116,10 @@ export async function ynabGetAccountsUncached(env: Env): Promise<YNABAccountSumm
     throw new Error(`YNAB accounts failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
 
-  return data.data?.accounts || [];
+  if (!data?.data || !Array.isArray(data.data.accounts)) {
+    throw new Error("YNAB accounts returned an invalid success response: data.accounts is required");
+  }
+  return data.data.accounts;
 }
 
 export async function ynabGetTransaction(env: Env, id: string): Promise<YNABExistingTransaction | null> {
@@ -119,7 +129,10 @@ export async function ynabGetTransaction(env: Env, id: string): Promise<YNABExis
   if (resp.status === 404) return null;
   const data: any = await readJsonBody(resp);
   if (!resp.ok) throw new Error(`YNAB transaction read failed: ${resp.status} - ${JSON.stringify(data)}`);
-  return data.data?.transaction || null;
+  if (!data?.data || !data.data.transaction || typeof data.data.transaction.id !== "string") {
+    throw new Error("YNAB transaction read returned an invalid success response: data.transaction is required");
+  }
+  return data.data.transaction;
 }
 
 export async function ynabGetAccountTransactions(env: Env, ynabAccountId: string, sinceDate?: string): Promise<YNABExistingTransaction[]> {
@@ -142,7 +155,10 @@ export async function ynabGetAccountTransactions(env: Env, ynabAccountId: string
     throw new Error(`YNAB account transactions failed: ${resp.status} - ${JSON.stringify(data)}`);
   }
 
-  return data.data?.transactions || [];
+  if (!data?.data || !Array.isArray(data.data.transactions)) {
+    throw new Error("YNAB account transactions returned an invalid success response: data.transactions is required");
+  }
+  return data.data.transactions;
 }
 
 export interface YNABAccountBalances {
@@ -167,15 +183,16 @@ export async function ynabGetAccount(env: Env, ynabAccountId: string): Promise<Y
     if (!resp.ok) return null;
 
     const a = data.data?.account;
-    if (!a) return null;
-
+    if (!a || ![a.cleared_balance, a.uncleared_balance, a.balance].every((v: any) => Number.isFinite(Number(v)))) {
+      throw new Error("YNAB account returned an invalid success response: account balances are required");
+    }
     return {
       cleared_balance: Number(a.cleared_balance),
       uncleared_balance: Number(a.uncleared_balance),
       balance: Number(a.balance)
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw error;
   }
 }
 

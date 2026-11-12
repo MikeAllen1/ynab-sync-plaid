@@ -8,12 +8,32 @@ import { Env } from "../types";
 // + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
-export async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  retries = 2,
+  retrySafe = ["GET", "HEAD", "OPTIONS"].includes(String(init.method || "GET").toUpperCase())
+): Promise<Response> {
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
-    const resp = await fetch(url, init);
-    if ((resp.status === 429 || resp.status >= 500) && attempt < retries) {
+    let resp: Response;
+    try {
+      resp = await fetch(url, init);
+    } catch (error) {
+      // A transport error after a mutation is ambiguous: the remote service may
+      // have committed it. Never replay writes unless the caller explicitly
+      // establishes that the operation is safe to repeat.
+      await keepLeaseAlive();
+      if (!retrySafe || attempt >= retries) throw error;
+      await sleep(Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250));
+      attempt++;
+      continue;
+    }
+    // A request may have outlived the lease TTL. Revalidate ownership before the
+    // caller can consume its response or issue a subsequent financial mutation.
+    await keepLeaseAlive();
+    if (retrySafe && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
       const retryAfter = Number(resp.headers.get("Retry-After"));
       const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 10000)

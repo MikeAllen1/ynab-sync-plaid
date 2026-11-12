@@ -128,6 +128,8 @@ export async function fetchRawWindow(
   const collected: any[] = [];
   let offset = 0;
   let total = Infinity;
+  let expectedTotal: number | null = null;
+  const seenIds = new Set<string>();
 
   while (collected.length < total && collected.length < MAX_TRANSACTIONS) {
     const plaid = await plaidCall(env, "/transactions/get", {
@@ -142,9 +144,33 @@ export async function fetchRawWindow(
       }
     });
 
-    const page = plaid.transactions || [];
+    if (!plaid || !Array.isArray(plaid.transactions) ||
+        !Number.isSafeInteger(plaid.total_transactions) || plaid.total_transactions < 0) {
+      throw new Error("Plaid /transactions/get returned an invalid page: transactions and non-negative total_transactions are required");
+    }
+    const page = plaid.transactions;
+    if (expectedTotal !== null && plaid.total_transactions !== expectedTotal) {
+      throw new Error("Plaid /transactions/get total_transactions changed during pagination; refusing an inconsistent verification window");
+    }
+    expectedTotal = plaid.total_transactions;
+    if (page.some((t: any) => !t || typeof t.transaction_id !== "string" ||
+        typeof t.account_id !== "string" || typeof t.date !== "string" ||
+        typeof t.amount !== "number" || !Number.isFinite(t.amount))) {
+      throw new Error("Plaid /transactions/get returned a malformed transaction");
+    }
+    if (page.length === 0 && collected.length < plaid.total_transactions) {
+      throw new Error("Plaid /transactions/get returned an empty page before total_transactions was reached");
+    }
+    if (page.length > pageSize) throw new Error("Plaid /transactions/get returned more rows than requested");
+    if (offset + page.length > plaid.total_transactions) {
+      throw new Error("Plaid /transactions/get returned more rows than total_transactions");
+    }
+    for (const transaction of page) {
+      if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages");
+      seenIds.add(transaction.transaction_id);
+    }
     collected.push(...page);
-    total = Number.isFinite(plaid.total_transactions) ? plaid.total_transactions : collected.length;
+    total = plaid.total_transactions;
     offset += page.length;
     if (page.length === 0) break;
   }

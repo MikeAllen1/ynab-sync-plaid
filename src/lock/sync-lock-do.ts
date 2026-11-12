@@ -6,7 +6,8 @@ import { SYNC_LOCK_TTL_SECONDS } from "./lock";
 // and webhooks cannot overwrite one another's history entries.
 const HISTORY_LIMITS: Record<string, number> = {
   event_log: 200,
-  webhook_history: 20
+  webhook_history: 20,
+  undo_log: 10
 };
 
 export class SyncLock {
@@ -44,11 +45,37 @@ export class SyncLock {
         const existing = Array.isArray(stored)
           ? stored
           : (Array.isArray(body.initial) ? body.initial : []);
-        const merged = [...body.items, ...existing].slice(0, limit);
+        let merged: any[];
+        if (key === "undo_log") {
+          merged = Array.isArray(existing) ? [...existing] : [];
+          for (const incoming of body.items) {
+            const at = incoming?.run_id ? merged.findIndex((entry: any) => entry?.run_id === incoming.run_id) : -1;
+            if (at >= 0) {
+              const prior = merged[at];
+              merged[at] = { ...prior, items: [...(Array.isArray(prior.items) ? prior.items : []), ...(Array.isArray(incoming.items) ? incoming.items : [])] };
+              merged[at].count = merged[at].items.length;
+            } else merged.unshift(incoming);
+          }
+          merged = merged.slice(0, limit);
+        } else merged = [...body.items, ...existing].slice(0, limit);
         await txn.put(`history:${key}`, merged);
         return merged.length;
       });
       return Response.json({ ok: true, count });
+    }
+
+    if (url.pathname === "/history/replace" && request.method === "POST") {
+      let body: any;
+      try {
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).byteLength > 256 * 1024) return Response.json({ error: "history payload too large" }, { status: 413 });
+        body = JSON.parse(raw);
+      } catch { return Response.json({ error: "invalid history payload" }, { status: 400 }); }
+      const key = String(body?.key || "");
+      const limit = HISTORY_LIMITS[key];
+      if (!limit || !Array.isArray(body?.items) || body.items.length > limit) return Response.json({ error: "invalid history replacement" }, { status: 400 });
+      await this.state.storage.transaction(async txn => { await txn.put(`history:${key}`, body.items); });
+      return Response.json({ ok: true, count: body.items.length });
     }
 
     if (url.pathname === "/history/get" && request.method === "GET") {

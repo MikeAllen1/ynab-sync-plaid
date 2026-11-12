@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { SyncLock } from "../src/lock/sync-lock-do";
 import { flushEventLog, getEventLog, LogEvent } from "../src/store/event-log";
 import { appendWebhookHistory, getWebhookHistory } from "../src/plaid/webhooks";
+import { appendUndo, getUndoLog } from "../src/sync/undo";
 import type { Env } from "../src/types";
 
 function makeEnv(seed: Record<string, string> = {}) {
@@ -100,4 +101,31 @@ test("concurrent lock acquisitions are serialized by a storage transaction", asy
   assert.equal(wrongRelease.released, false);
   const release = await stub.fetch(`https://sync-lock/release?id=${encodeURIComponent(holder)}`, { method: "POST" }).then(r => r.json() as Promise<any>);
   assert.equal(release.released, true);
+});
+
+test("concurrent undo appends preserve every created row and group by run id", async () => {
+  const { env } = makeEnv();
+  await Promise.all([
+    appendUndo(env, "run-1", "cron", [{ id: "row-a", account: "checking" }]),
+    appendUndo(env, "run-1", "cron", [{ id: "row-b", account: "savings" }]),
+    appendUndo(env, "run-2", "manual", [{ id: "row-c", account: "checking" }])
+  ]);
+  const log = await getUndoLog(env);
+  assert.equal(log.length, 2, "same-run rows should be grouped in one undo batch");
+  const run1 = log.find(batch => batch.run_id === "run-1");
+  assert.deepEqual(new Set(run1?.items.map(item => item.id)), new Set(["row-a", "row-b"]));
+  assert.equal(run1?.count, 2);
+  assert.ok(log.some(batch => batch.run_id === "run-2"));
+});
+
+test("undo history supports transactional replacement after an undo operation", async () => {
+  const { env } = makeEnv();
+  await appendUndo(env, "run-1", "manual", [{ id: "row-a", account: "checking" }]);
+  const stub = env.SYNC_LOCK!.get(env.SYNC_LOCK!.idFromName("global"));
+  const response = await stub.fetch("https://sync-lock/history/replace", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "undo_log", items: [] })
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await getUndoLog(env), []);
 });

@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { syncAccountEngine } from "../src/sync/engine";
 import { resetRunCache } from "../src/plaid/fetch";
+import { SyncLock } from "../src/lock/sync-lock-do";
+import { getUndoLog } from "../src/sync/undo";
 import type { Env } from "../src/types";
 
 test("a lost YNAB create response leaves cursor unchanged and next run recovers the committed row", async () => {
@@ -17,8 +19,34 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     ["sync:enabled", "true"]
   ]);
   const ynabRows: any[] = [];
+  const doData = new Map<string, unknown>();
+  let doTail = Promise.resolve();
+  const doStorage: any = {
+    get: async (key: string) => doData.get(key),
+    put: async (key: string, value: unknown) => { doData.set(key, value); },
+    delete: async (key: string) => doData.delete(key),
+    transaction: async (fn: (txn: any) => Promise<any>) => {
+      let release!: () => void;
+      const previous = doTail;
+      doTail = new Promise<void>(resolve => { release = resolve; });
+      await previous;
+      try { return await fn({
+        get: async (key: string) => doData.get(key),
+        put: async (key: string, value: unknown) => { doData.set(key, value); },
+        delete: async (key: string) => doData.delete(key)
+      }); } finally { release(); }
+    }
+  };
+  const durableObject = new SyncLock({ storage: doStorage } as any);
+  const syncLock: any = {
+    idFromName: (name: string) => name,
+    get: () => ({ fetch: (input: RequestInfo | URL, init?: RequestInit) => durableObject.fetch(new Request(input, init)) })
+  };
   let failAfterCommit = true;
   let failCursorCommit = false;
+  let malformedSyncPage = false;
+  let failPlaidSyncTransport = false;
+  let plaidTransportFailures = 0;
   const originalFetch = globalThis.fetch;
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
@@ -28,6 +56,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     YNAB_TOKEN: "ynab-token",
     YNAB_BUDGET_ID: "budget-id",
     TIMEZONE: "America/Chicago",
+    SYNC_LOCK: syncLock,
     SYNC_STATE: {
       get: async (key: string) => values.get(key) ?? null,
       put: async (key: string, value: string) => {
@@ -46,6 +75,8 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     if (url.hostname === "production.plaid.com") {
       const body = JSON.parse(String(init?.body || "{}"));
       if (url.pathname === "/transactions/sync") {
+        if (failPlaidSyncTransport) { plaidTransportFailures++; throw new Error("simulated Plaid connection reset"); }
+        if (malformedSyncPage) return Response.json({ added: [], modified: [], removed: [], next_cursor: "cursor-bad", has_more: "false" });
         const second = body.cursor === "cursor-next";
         return Response.json({
           added: [{
@@ -116,7 +147,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     assert.equal(recovered.status, "ok");
     assert.equal(values.get("cursor:plaid-checking"), "cursor-next", "cursor advances only after the committed row is recovered");
     assert.equal(values.has("undo_intent:plaid-checking"), false, "recovered intent is cleared");
-    const undo = JSON.parse(values.get("undo_log") || "[]");
+    const undo = await getUndoLog(env);
     assert.ok(undo.some((batch: any) => batch.items?.some((item: any) => item.id === "ynab-created-1")), "the committed row must be recorded for undo");
     assert.equal(ynabRows.length, 1, "recovery must not create a duplicate");
 
@@ -135,7 +166,27 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     const cursorRecovered = await syncAccountEngine(env, account, [], { trigger: "cursor-recovery", runId: "run-fault-4" });
     assert.equal(cursorRecovered.status, "ok");
     assert.equal(values.get("cursor:plaid-checking"), "cursor-third");
+
     assert.equal(ynabRows.length, 2, "replaying after cursor persistence failure must not duplicate the row");
+
+    malformedSyncPage = true;
+    resetRunCache();
+    await assert.rejects(
+      syncAccountEngine(env, account, [], { trigger: "malformed-page", runId: "run-fault-5" }),
+      /Plaid \/transactions\/sync returned an invalid page/
+    );
+
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "malformed pagination metadata must never advance the saved cursor");
+
+    malformedSyncPage = false;
+    failPlaidSyncTransport = true;
+    resetRunCache();
+    await assert.rejects(
+      syncAccountEngine(env, account, [], { trigger: "plaid-transport-fault", runId: "run-fault-6" }),
+      /simulated Plaid connection reset/
+    );
+    assert.equal(plaidTransportFailures, 3, "safe Plaid reads use bounded retries");
+    assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "an upstream timeout must not advance the cursor");
   } finally {
     globalThis.fetch = originalFetch;
     resetRunCache();
