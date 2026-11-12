@@ -12,11 +12,16 @@ export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   retries = 2,
-  retrySafe = ["GET", "HEAD", "OPTIONS"].includes(String(init.method || "GET").toUpperCase())
+  options: { retrySafe?: boolean; beforeAttempt?: () => Promise<void> } | boolean = {}
 ): Promise<Response> {
+  const method = String(init.method || "GET").toUpperCase();
+  const safeToRetry = typeof options === "boolean"
+    ? options
+    : options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
+    if (typeof options !== "boolean" && options.beforeAttempt) await options.beforeAttempt();
     let resp: Response;
     try {
       resp = await fetch(url, init);
@@ -25,19 +30,38 @@ export async function fetchWithRetry(
       // have committed it. Never replay writes unless the caller explicitly
       // establishes that the operation is safe to repeat.
       await keepLeaseAlive();
-      if (!retrySafe || attempt >= retries) throw error;
+      if (!safeToRetry || attempt >= retries) throw error;
       await sleep(Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250));
       attempt++;
       continue;
     }
-    // A request may have outlived the lease TTL. Revalidate ownership before the
-    // caller can consume its response or issue a subsequent financial mutation.
+    // Revalidate ownership before the caller can consume the response or issue
+    // a subsequent financial mutation.
     await keepLeaseAlive();
-    if (retrySafe && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      const retryAfter = Number(resp.headers.get("Retry-After"));
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(retryAfter * 1000, 10000)
+    if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
+      const header = resp.headers.get("Retry-After");
+      let requestedMs = 0;
+      let validRetryAfter = false;
+      if (header !== null) {
+        const seconds = Number(header);
+        if (header.trim() !== "" && Number.isFinite(seconds) && seconds >= 0) {
+          requestedMs = seconds * 1000;
+          validRetryAfter = true;
+        } else {
+          const date = Date.parse(header);
+          if (Number.isFinite(date)) {
+            requestedMs = Math.max(0, date - Date.now());
+            validRetryAfter = true;
+          }
+        }
+      }
+      const backoffMs = validRetryAfter
+        ? requestedMs
         : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+      // Do not shorten a provider-specified delay; defer to the next scheduled
+      // execution when it exceeds this Worker request's bounded retry window.
+      if (backoffMs > 10000) return resp;
+      try { await resp.body?.cancel(); } catch { /* retry only if semantics are safe */ }
       await sleep(backoffMs);
       attempt++;
       continue;
