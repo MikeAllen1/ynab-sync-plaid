@@ -38,6 +38,8 @@ src/
     accounts.ts            Linked accounts and per-account settings (KV)
     event-log.ts           What each sync did (KV, last 200 events)
     card-epoch.ts          Re-adding a card's history after deleting it in YNAB
+    durable-state.ts       Per-account sync state (cursor, links, posted ids...) kept in the
+                           SyncLock Durable Object, next to the lock that guards it
 
   rules/
     skip-rules.ts          Bank items never to import
