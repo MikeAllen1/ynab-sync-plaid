@@ -420,8 +420,9 @@ export async function migratePlaidAccountIdentity(
     note: "Old Plaid-ID state is intentionally retained. The new ID starts with a fresh cursor and bootstraps against the existing YNAB register."
   };
   await env.SYNC_STATE.put(historyKey, JSON.stringify(record));
-  // Disable writes before changing identity. If a later KV write fails, the old
-  // mapping remains in place but stays safely paused for operator review.
+  // Disable global and per-account writes before changing identity. If a later KV
+  // write fails, the old mapping remains in place but stays safely paused.
+  await env.SYNC_STATE.put("sync:enabled", "false");
   await putAccountAutomationSettings(env, [{ nickname, sync_enabled: false }]);
   const updated = accounts.map(a => a.nickname === nickname
     ? { ...a, plaid_access_token: newAccessToken, plaid_account_id: newPlaidAccountId, item_id: newItemId }
