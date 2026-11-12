@@ -49,7 +49,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, checkAdminTokenAttempt, constantTimeEqual, createAdminSessionValue, isHeaderAuthenticated, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, NO_FRAMING, bumpSessionEpoch, checkAdminTokenAttempt, constantTimeEqual, createAdminSessionValue, getSessionEpoch, isHeaderAuthenticated, json, requireAdmin } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -132,7 +132,10 @@ export const workerEntry = {
         const supplied = req.headers.get("x-admin-token") || "";
         const refused = await checkAdminTokenAttempt(req, env, supplied);
         if (refused) return refused;
-        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
+        let epoch: number;
+        try { epoch = await getSessionEpoch(env); }
+        catch { return json({ ok: false, error: "The sync lock service (SYNC_LOCK Durable Object) couldn't be reached, so a session can't be issued. Check the Durable Object binding." }, 503); }
+        const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN, undefined, epoch);
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
@@ -147,7 +150,14 @@ export const workerEntry = {
         return json({ ok: true });
       }
       if (req.method === "DELETE") {
-        return new Response(JSON.stringify({ ok: true }), {
+        // Signing out ends every admin session, not just this browser's cookie, when
+        // the caller is signed in. (An unauthenticated DELETE only clears its own
+        // cookie, so it can't be used to sign the owner out.)
+        let signedOutEverywhere = false;
+        if (!(await requireAdmin(req, env))) {
+          try { await bumpSessionEpoch(env); signedOutEverywhere = true; } catch { /* cookie still cleared below */ }
+        }
+        return new Response(JSON.stringify({ ok: true, signed_out_everywhere: signedOutEverywhere }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",

@@ -23,7 +23,7 @@ test("admin session exchanges header token for a short-lived HttpOnly cookie", a
   assert.match(cookie, /SameSite=Strict/);
   assert.match(cookie, /Max-Age=3600/);
   assert.equal(cookie.includes(env.ADMIN_TOKEN), false, "raw admin token must not be placed in the cookie");
-  assert.match(decodeURIComponent(cookie.split(";")[0].split("=")[1]), /^v1\.\d+\.[a-f0-9]{64}$/);
+  assert.match(decodeURIComponent(cookie.split(";")[0].split("=")[1]), /^v2\.\d+\.\d+\.[a-f0-9]{64}$/);
 });
 
 test("signed HttpOnly session cookie authenticates without exposing the admin token", async () => {

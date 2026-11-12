@@ -243,7 +243,7 @@ export function dashboardHtml(): Response {
     <div class="block">
       <h2>Admin token</h2>
       <p class="hint">Stored only in this browser.</p>
-      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" onclick="saveToken()">Save</button><button class="btn ghost" onclick="clearToken()">Clear</button></div></div>
+      <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" onclick="saveToken()">Save</button><button class="btn ghost" onclick="clearToken()">Sign out</button></div></div>
     </div>
     <div class="block">
       <h2>Bank connections</h2>
@@ -891,8 +891,10 @@ async function saveToken() {
   } catch (e) { attention([e.message], "bad"); }
 }
 async function clearToken() {
-  await fetch("/session", { method: "DELETE", credentials: "same-origin" });
-  setOverall("No token", ""); attention(["Admin browser session cleared."], "ok");
+  var d = {};
+  try { d = await (await fetch("/session", { method: "DELETE", credentials: "same-origin" })).json(); } catch (e) { /* cookie is cleared regardless */ }
+  setOverall("No token", "");
+  attention([d && d.signed_out_everywhere ? "Signed out on every browser. Any other open dashboard needs the admin token again." : "This browser's admin session was cleared."], "ok");
 }
 
 async function loadItems(force) {

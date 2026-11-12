@@ -89,14 +89,68 @@ export const NO_FRAMING = {
 
 export const ADMIN_SESSION_COOKIE = "__Host-ynab_admin";
 
-export async function createAdminSessionValue(adminToken: string, issuedAt = Math.floor(Date.now() / 1000)): Promise<string> {
+// Session cookies are stateless HMACs keyed by ADMIN_TOKEN, plus a session epoch held
+// in the SyncLock Durable Object. Bumping the epoch (signing out) invalidates every
+// session cookie already issued, on every browser, before it expires. Rotating
+// ADMIN_TOKEN does the same.
+async function signSession(adminToken: string, payload: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(adminToken),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
   );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
-  const hex = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
-  return `v1.${issuedAt}.${hex}`;
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function createAdminSessionValue(adminToken: string, issuedAt = Math.floor(Date.now() / 1000), epoch = 0): Promise<string> {
+  const payload = `v2.${issuedAt}.${epoch}`;
+  return `${payload}.${await signSession(adminToken, payload)}`;
+}
+
+/** Current session epoch. 0 without the Durable Object; throws if it can't be read. */
+export async function getSessionEpoch(env: Env): Promise<number> {
+  if (!env.SYNC_LOCK) return 0;
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const resp = await stub.fetch("https://sync-lock/session/epoch");
+  if (!resp.ok) throw new Error(`session epoch unavailable (${resp.status})`);
+  const data: any = await resp.json();
+  const epoch = Number(data?.epoch);
+  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new Error("session epoch invalid");
+  return epoch;
+}
+
+/** Invalidate every admin session issued so far. */
+export async function bumpSessionEpoch(env: Env): Promise<number> {
+  if (!env.SYNC_LOCK) throw new Error("Signing out every session needs the SYNC_LOCK Durable Object.");
+  const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
+  const resp = await stub.fetch("https://sync-lock/session/epoch/bump", { method: "POST" });
+  if (!resp.ok) throw new Error(`session epoch bump failed (${resp.status})`);
+  const data: any = await resp.json();
+  return Number(data?.epoch);
+}
+
+export async function isValidAdminSessionCookie(req: Request, env: Env): Promise<boolean> {
+  const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
+    .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
+  if (!cookieValue || !env.ADMIN_TOKEN) return false;
+  try {
+    const decoded = decodeURIComponent(cookieValue);
+    // v2.<issuedAt>.<epoch>.<hmac>; legacy v1.<issuedAt>.<hmac> counts as epoch 0.
+    const v2 = /^v2\.(\d+)\.(\d+)\.([a-f0-9]{64})$/.exec(decoded);
+    const v1 = v2 ? null : /^v1\.(\d+)\.([a-f0-9]{64})$/.exec(decoded);
+    if (!v2 && !v1) return false;
+    const issuedAt = Number((v2 || v1)![1]);
+    const epoch = v2 ? Number(v2[2]) : 0;
+    const mac = v2 ? v2[3] : v1![2];
+    const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
+    if (!Number.isSafeInteger(issuedAt) || !Number.isSafeInteger(epoch) || ageSeconds < 0 || ageSeconds > 3600) return false;
+    const payload = v2 ? `v2.${issuedAt}.${epoch}` : `v1.${issuedAt}`;
+    if (!constantTimeEqual(mac, await signSession(env.ADMIN_TOKEN, payload))) return false;
+    // Fails closed: a session can't be honored if its epoch can't be checked.
+    return epoch === await getSessionEpoch(env);
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Admin-token attempt throttling ----------
@@ -146,26 +200,6 @@ export async function checkAdminTokenAttempt(req: Request, env: Env, supplied: s
 
 export async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
   const headerToken = req.headers.get("x-admin-token");
-  const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
-    .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
-  let cookieValid = false;
-  try {
-    const decoded = cookieValue ? decodeURIComponent(cookieValue) : "";
-    const match = /^v1\.(\d+)\.([a-f0-9]{64})$/.exec(decoded);
-    if (match) {
-      const issuedAt = Number(match[1]);
-      const ageSeconds = Math.floor(Date.now() / 1000) - issuedAt;
-      if (Number.isSafeInteger(issuedAt) && ageSeconds >= 0 && ageSeconds <= 3600 && env.ADMIN_TOKEN) {
-        const key = await crypto.subtle.importKey(
-          "raw", new TextEncoder().encode(env.ADMIN_TOKEN),
-          { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-        );
-        const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${issuedAt}`));
-        const expected = [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
-        cookieValid = constantTimeEqual(match[2], expected);
-      }
-    }
-  } catch { cookieValid = false; }
 
   if (!env.ADMIN_TOKEN) {
     return json({ error: "ADMIN_TOKEN is not configured. Run: npx wrangler secret put ADMIN_TOKEN" }, 500);
@@ -179,12 +213,8 @@ export async function requireAdmin(req: Request, env: Env): Promise<Response | n
     if (refused) return refused;
     return null;
   }
-
-  if (!cookieValid) {
-    return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
-  }
-
-  return null;
+  if (await isValidAdminSessionCookie(req, env)) return null;
+  return json({ error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
 }
 
 /** True when the request authenticates with the x-admin-token header rather than a cookie. */
