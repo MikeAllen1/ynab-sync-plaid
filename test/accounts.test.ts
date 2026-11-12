@@ -135,3 +135,32 @@ test("token display helper never reveals credential characters", () => {
   assert.equal(maskToken("access-token-with-sensitive-prefix"), "••••••••");
   assert.equal(maskToken(undefined), "");
 });
+
+test("saved settings still apply when the stored nickname differs only by case (\"Amex\" vs \"amex\")", async () => {
+  const { settingForAccount, saveAccountConfiguration } = await import("../src/store/accounts");
+  const tok = "access-production-00000000-0000-0000-0000-000000000004";
+  const store: Record<string, string> = {
+    account_map: JSON.stringify([{ nickname: "Amex", institution: "", plaid_access_token: tok, plaid_account_id: "DDD4", ynab_account_id: "y4", item_id: "item4", is_credit_card: true }]),
+    account_automation_settings: JSON.stringify([{ nickname: "Amex", sync_enabled: true, backfill_enabled: false, sync_frequency_minutes: 120, audit_enabled: true }]),
+    "bootstrapped:DDD4": "1",
+    "cursor:DDD4": "cursor-from-the-old-worker",
+  };
+  const env = { SYNC_STATE: {
+    get: async (k: string) => store[k] ?? null,
+    put: async (k: string, v: string) => { store[k] = v; },
+    delete: async (k: string) => { delete store[k]; },
+  } } as unknown as Env;
+
+  const [acct] = await getAccounts(env);
+  assert.equal(acct.nickname, "amex");
+  const settings = await getAccountAutomationSettings(env);
+  assert.equal(settings[0].sync_enabled, true, "the saved 'Amex' setting must apply to account 'amex'");
+  assert.equal(settings[0].sync_frequency_minutes, 120);
+  assert.equal(settingForAccount([{ nickname: "Amex", sync_enabled: true, backfill_enabled: false, sync_frequency_minutes: 120, audit_enabled: true }], acct).sync_enabled, true);
+
+  // Saving it unchanged from the dashboard must not look like "turned back on", which
+  // would throw away the account's sync position and re-bootstrap it.
+  await saveAccountConfiguration(env, [{ nickname: "amex", plaid_account_id: "DDD4", ynab_account_id: "y4", is_credit_card: true }], [{ nickname: "amex", sync_enabled: true, backfill_enabled: false, sync_frequency_minutes: 120, audit_enabled: true }]);
+  assert.equal(store["cursor:DDD4"], "cursor-from-the-old-worker");
+  assert.equal(store["bootstrapped:DDD4"], "1");
+});

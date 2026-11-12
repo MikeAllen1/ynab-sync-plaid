@@ -3,8 +3,13 @@ import { AccountAutomationSetting, AccountConfig, Env } from "../types";
 
 // ---------- Account automation settings ----------
 
+/** Account nicknames are compared in their normalized form ("Amex" and "amex" are the same account). */
+export function normalizeNickname(value: unknown): string {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+}
+
 export function defaultSettingForAccount(nickname: string): AccountAutomationSetting {
-  const configured = DEFAULT_ACCOUNT_AUTOMATION_SETTINGS.find(s => s.nickname === nickname);
+  const configured = DEFAULT_ACCOUNT_AUTOMATION_SETTINGS.find(s => normalizeNickname(s.nickname) === normalizeNickname(nickname));
   if (configured) return { ...configured };
 
   // Any account not listed above starts OFF: nothing syncs until you turn it on.
@@ -290,7 +295,7 @@ export async function getAccountAutomationSettings(env: Env): Promise<AccountAut
 
   return accounts.map(acct => {
     const defaults = defaultSettingForAccount(acct.nickname);
-    const override = saved.find(s => s && s.nickname === acct.nickname) || {};
+    const override = saved.find(s => s && normalizeNickname(s.nickname) === acct.nickname) || {};
     const freq = Number(override.sync_frequency_minutes);
 
     return {
@@ -357,8 +362,8 @@ export async function putAccountAutomationSettings(env: Env, settings: any[], ac
 
   const normalized = accounts.map(acct => {
     const defaults = defaultSettingForAccount(acct.nickname);
-    const prev = saved.find(s => s && s.nickname === acct.nickname) || {} as any;
-    const input = Array.isArray(settings) ? settings.find(s => s && s.nickname === acct.nickname) || {} : {};
+    const prev = saved.find(s => s && normalizeNickname(s.nickname) === acct.nickname) || {} as any;
+    const input = Array.isArray(settings) ? settings.find(s => s && normalizeNickname(s.nickname) === acct.nickname) || {} : {};
     const freq = Number(input.sync_frequency_minutes);
     const prevFreq = Number(prev.sync_frequency_minutes);
 
@@ -394,9 +399,9 @@ export async function putAccountAutomationSettings(env: Env, settings: any[], ac
   // re-create charges Direct Import (or you) already put in YNAB. Set it up fresh
   // instead; the next sync bootstraps it and catches up from YNAB's newest import.
   if (applySideEffects && persist) for (const acct of accounts) {
-    const prev = saved.find(s => s && s.nickname === acct.nickname) || {} as any;
+    const prev = saved.find(s => s && normalizeNickname(s.nickname) === acct.nickname) || {} as any;
     const wasOn = prev.sync_enabled !== undefined ? prev.sync_enabled !== false : defaultSettingForAccount(acct.nickname).sync_enabled;
-    const nowOn = normalized.find(n => n.nickname === acct.nickname)?.sync_enabled;
+    const nowOn = normalized.find(n => normalizeNickname(n.nickname) === acct.nickname)?.sync_enabled;
     if (!wasOn && nowOn && (await env.SYNC_STATE.get(`bootstrapped:${acct.plaid_account_id}`)) === "1") {
       await env.SYNC_STATE.delete(`bootstrapped:${acct.plaid_account_id}`);
       await env.SYNC_STATE.delete(`cursor:${acct.plaid_account_id}`);
@@ -417,9 +422,9 @@ export async function saveAccountConfiguration(env: Env, incomingAccounts: any[]
   // before the commit. If a reset fails, the old configuration remains active;
   // if the final bundle write fails, an early reset is harmless and repeatable.
   for (const acct of accounts) {
-    const previous = previousSettings.find(s => s.nickname === acct.nickname);
+    const previous = previousSettings.find(s => normalizeNickname(s.nickname) === acct.nickname);
     const wasOn = previous ? previous.sync_enabled : defaultSettingForAccount(acct.nickname).sync_enabled;
-    const nowOn = settings.find(s => s.nickname === acct.nickname)?.sync_enabled;
+    const nowOn = settings.find(s => normalizeNickname(s.nickname) === acct.nickname)?.sync_enabled;
     if (!wasOn && nowOn && (await env.SYNC_STATE.get(`bootstrapped:${acct.plaid_account_id}`)) === "1") {
       await env.SYNC_STATE.delete(`bootstrapped:${acct.plaid_account_id}`);
       await env.SYNC_STATE.delete(`cursor:${acct.plaid_account_id}`);
@@ -449,7 +454,7 @@ export async function getEnabledAccounts(env: Env): Promise<AccountConfig[]> {
 
 
 export function settingForAccount(settings: AccountAutomationSetting[], acct: AccountConfig): AccountAutomationSetting {
-  return settings.find(s => s.nickname === acct.nickname) || defaultSettingForAccount(acct.nickname);
+  return settings.find(s => normalizeNickname(s.nickname) === normalizeNickname(acct.nickname)) || defaultSettingForAccount(acct.nickname);
 }
 
 export function isCreditCardAccount(acct: AccountConfig): boolean {
