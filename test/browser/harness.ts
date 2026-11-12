@@ -66,7 +66,7 @@ async function fakeFetch(input: any, init?: any): Promise<Response> {
   const url = new URL(req.url);
   const bodyText = req.method === "GET" || req.method === "DELETE" ? "" : await req.text();
   const body = bodyText ? JSON.parse(bodyText) : {};
-  if (url.hostname.endsWith("plaid.com")) {
+  if (/^(sandbox|development|production)\.plaid\.com$/.test(url.hostname)) {
     plaidCalls.push(url.pathname);
     const tok = body.access_token;
     const accts = plaidAccounts[tok] || [];
@@ -163,7 +163,7 @@ http.createServer(async (nreq, nres) => {
     else if (cmd === "reset-log") { apiLog.length = 0; plaidCalls.length = 0; ynabCalls.length = 0; kvWrites.length = 0; }
     else if (cmd === "kv-put") kv.set(url.searchParams.get("k")!, body.toString());
     else if (cmd === "drop-next") dropNextResponseFor = url.searchParams.get("path");
-    else if (cmd === "delay") delayMs[url.searchParams.get("path")!] = Number(url.searchParams.get("ms"));
+    else if (cmd === "delay") delayMs[url.searchParams.get("path")!] = Math.min(5000, Math.max(0, Math.floor(Number(url.searchParams.get("ms")) || 0)));
     else if (cmd === "fail-ynab-delete") failNextYnabDelete = Number(url.searchParams.get("n") || 1);
     else if (cmd === "ynab-edit") { const r = ynabRows.find(x => x.id === url.searchParams.get("id")); if (r) Object.assign(r, JSON.parse(body.toString())); out = r; }
     else if (cmd === "plaid-add") { const t = JSON.parse(body.toString()); (plaidTx[t.account_id] ||= []).push(t); }
@@ -174,10 +174,10 @@ http.createServer(async (nreq, nres) => {
   const req = new Request(ORIGIN + (nreq.url || "/"), { method: nreq.method, headers, body: ["GET", "HEAD"].includes(nreq.method || "GET") ? undefined : body });
   const waits: Promise<any>[] = [];
   const started = Date.now();
-  const d = delayMs[url.pathname]; if (d) await new Promise(r => setTimeout(r, d));
+  const d = Math.min(5000, delayMs[url.pathname] || 0); if (d > 0) await new Promise(r => setTimeout(r, d));
   let resp: Response;
   try { resp = await workerEntry.fetch(req, env, { waitUntil: (p: Promise<any>) => waits.push(p), passThroughOnException() {} } as any); }
-  catch (e: any) { resp = new Response(String(e?.stack || e), { status: 599 }); }
+  catch (e: any) { console.error(e); resp = new Response("harness: worker threw", { status: 599 }); }
   const text = await resp.text();
   if (!url.pathname.startsWith("/dashboard") && url.pathname !== "/setup") apiLog.push({ t: started, method: nreq.method, path: url.pathname + url.search, status: resp.status, body: body.length ? body.toString().slice(0, 600) : undefined, resp: text.slice(0, 600) });
   if (dropNextResponseFor && url.pathname === dropNextResponseFor) { dropNextResponseFor = null; nreq.socket.destroy(); return; }

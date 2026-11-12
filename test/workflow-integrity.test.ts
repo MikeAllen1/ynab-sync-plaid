@@ -117,7 +117,7 @@ test("retrying Add this account after a lost response reports it added, not 'alr
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any) => {
     const url = new URL(typeof input === "string" ? input : input.url);
-    if (url.hostname.endsWith("plaid.com")) return Response.json({ accounts: [{ account_id: "acct-new", mask: "4444", type: "depository" }], request_id: "r" });
+    if (url.hostname === "sandbox.plaid.com") return Response.json({ accounts: [{ account_id: "acct-new", mask: "4444", type: "depository" }], request_id: "r" });
     if (url.hostname === "api.ynab.com") return Response.json({ data: { accounts: [{ id: "ynab-new", name: "Savings", type: "savings", closed: false, deleted: false }], server_knowledge: 1 } });
     throw new Error("unexpected " + url);
   }) as typeof fetch;
