@@ -44,7 +44,7 @@ export function setupHtml(): string {
 
   <h2>Add a bank</h2>
   <p class="muted">Link the bank, then choose which of its accounts to sync and the YNAB account each one feeds. Before the first sync, set the YNAB account's starting balance to the bank's posted balance.</p>
-  <button id="addBtn" onclick="addBank()">Link a new bank</button>
+  <button id="addBtn">Link a new bank</button>
   <div id="newAccounts"></div>
   <div id="status"></div>
 
@@ -53,6 +53,8 @@ var tokenInput = document.getElementById("token");
 sessionStorage.removeItem("ynab_sync_admin_token");
 var authentication = null;
 tokenInput.addEventListener("change", function () { authenticate().catch(function () {}); });
+ document.getElementById("addBtn").addEventListener("click", addBank);
+ document.getElementById("newAccounts").addEventListener("click", function (event) { var button = event.target && event.target.closest ? event.target.closest('[data-action="add-account"]') : null; if (button) addAccount(button); });
 async function authenticate() {
   if (authentication) return authentication;
   var value = tokenInput.value.trim();
@@ -135,7 +137,7 @@ function onLinked(publicToken, metadata) {
         '<div class="grid"><input data-f="nickname" placeholder="Nickname, e.g. amex" />' +
         '<select data-f="ynab"><option value="">Choose YNAB account…</option>' + options + "</select></div>" +
         '<label class="muted"><input type="checkbox" data-f="card" style="width:auto"' + (isCard ? " checked" : "") + " /> Credit card</label>" +
-        '<button onclick="addAccount(this)">Add this account</button></div>';
+        '<button data-action="add-account">Add this account</button></div>';
     }).join("");
     setStatus("Choose the accounts to sync. Each one starts syncing on the next run.", true);
     document.getElementById("addBtn").disabled = false;
