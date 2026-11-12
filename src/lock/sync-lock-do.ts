@@ -21,6 +21,43 @@ export class SyncLock {
     const now = Date.now();
     const ttlMs = SYNC_LOCK_TTL_SECONDS * 1000;
 
+    if (url.pathname === "/webhook/release" && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch {
+        return Response.json({ error: "invalid webhook receipt" }, { status: 400 });
+      }
+      const digest = String(body?.digest || "");
+      if (!/^[a-f0-9]{64}$/.test(digest)) {
+        return Response.json({ error: "invalid webhook digest" }, { status: 400 });
+      }
+      await this.state.storage.delete(`webhook_receipt:${digest}`);
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/webhook/claim" && request.method === "POST") {
+      let body: any;
+      try { body = await request.json(); } catch {
+        return Response.json({ error: "invalid webhook receipt" }, { status: 400 });
+      }
+      const digest = String(body?.digest || "");
+      if (!/^[a-f0-9]{64}$/.test(digest)) {
+        return Response.json({ error: "invalid webhook digest" }, { status: 400 });
+      }
+      const ttl = Math.max(60, Math.min(3600, Number(body?.ttl_seconds) || 600));
+      const claimed = await this.state.storage.transaction(async txn => {
+        const receipts = await txn.list<number>({ prefix: "webhook_receipt:", limit: 1000 });
+        for (const [key, expiresAt] of receipts) {
+          if (typeof expiresAt !== "number" || expiresAt <= now) await txn.delete(key);
+        }
+        const key = `webhook_receipt:${digest}`;
+        const prior = await txn.get<number>(key);
+        if (typeof prior === "number" && prior > now) return false;
+        await txn.put(key, now + ttl * 1000);
+        return true;
+      });
+      return Response.json({ ok: true, claimed, duplicate: !claimed });
+    }
+
     if (url.pathname === "/history/append" && request.method === "POST") {
       let body: any;
       try {
