@@ -398,6 +398,13 @@ export async function migratePlaidAccountIdentity(
       throw new Error(`The new Plaid account ID already has saved sync state (${key}); migration was not performed.`);
     }
   }
+  const masksRaw = await env.SYNC_STATE.get("plaid_masks");
+  if (masksRaw !== null) {
+    let masks: any;
+    try { masks = JSON.parse(masksRaw); } catch { throw new Error("Saved Plaid account masks are unreadable; migration was not performed."); }
+    if (!masks || typeof masks !== "object" || Array.isArray(masks)) throw new Error("Saved Plaid account masks are invalid; migration was not performed.");
+    if (masks[newPlaidAccountId]) throw new Error("The new Plaid account ID already has saved account metadata; migration was not performed.");
+  }
 
   const migrationId = crypto.randomUUID();
   const historyKey = `account_migration:${migrationId}`;
