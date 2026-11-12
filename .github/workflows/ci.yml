@@ -33,6 +33,10 @@ jobs:
           cp wrangler.toml.example wrangler.toml
           sed -i 's/PASTE_KV_NAMESPACE_ID_HERE/00000000000000000000000000000000/; s/PASTE_YNAB_BUDGET_ID_HERE/00000000-0000-0000-0000-000000000000/' wrangler.toml
           npx wrangler deploy --dry-run --outdir dist
+      - name: Validate security verification scripts
+        run: |
+          node --check scripts/verify-cloudflare-production.mjs
+          node --check scripts/browser-smoke.mjs
       - name: Install Chromium smoke-test tooling
         run: |
           npm install --no-save --package-lock=false playwright@1.56.1
