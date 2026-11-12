@@ -117,3 +117,34 @@ test("ambiguous YNAB delete is safely retried after confirming the row is gone",
     assert.equal(calls, 2);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("partially committed YNAB update batch converges when individual rows are replayed", async () => {
+  const originalFetch = globalThis.fetch;
+  const rows = new Map([
+    ["row-a", { id: "row-a", cleared: "uncleared" }],
+    ["row-b", { id: "row-b", cleared: "uncleared" }]
+  ]);
+  let batchCalls = 0;
+  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    const updates = body.transactions || [];
+    if (updates.length > 1) {
+      batchCalls++;
+      rows.set(updates[0].id, { ...rows.get(updates[0].id)!, ...updates[0] });
+      return Response.json({ error: { detail: "gateway failed after partial batch commit" } }, { status: 503 });
+    }
+    rows.set(updates[0].id, { ...rows.get(updates[0].id)!, ...updates[0] });
+    return Response.json({ data: { transaction_ids: [updates[0].id] } });
+  };
+  try {
+    const result = await ynabUpdateEach(env, [
+      { id: "row-a", cleared: "cleared" },
+      { id: "row-b", cleared: "cleared" }
+    ]);
+    assert.equal(batchCalls, 1);
+    assert.equal(result.updated, 2);
+    assert.deepEqual(result.failed, []);
+    assert.equal(rows.get("row-a")?.cleared, "cleared");
+    assert.equal(rows.get("row-b")?.cleared, "cleared");
+  } finally { globalThis.fetch = originalFetch; }
+});
