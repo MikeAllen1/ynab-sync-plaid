@@ -168,7 +168,6 @@ export function toIsoDate(d: Date): string {
 }
 
 export function lookbackDate(env: Env): string {
-  void env; // reserved for a future per-env configurable window
   return shiftCalendarDate(todayInTimeZone(env), -YNAB_LOOKBACK_DAYS);
 }
 
