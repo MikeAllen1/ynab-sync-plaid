@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getAccountAutomationSettings, getAccounts, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
+import { getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, saveAccountsMerged } from "../src/store/accounts";
 import type { Env } from "../src/types";
 
 function mockEnv(initial: Record<string, string> = {}) {
@@ -128,4 +128,10 @@ test("valid persisted account maps normalize nicknames consistently", async () =
   assert.equal(accounts[0].plaid_access_token, "token");
   assert.equal(accounts[0].plaid_account_id, "plaid-checking");
   assert.equal(accounts[0].ynab_account_id, "ynab-checking");
+});
+
+
+test("token display helper never reveals credential characters", () => {
+  assert.equal(maskToken("access-token-with-sensitive-prefix"), "••••••••");
+  assert.equal(maskToken(undefined), "");
 });

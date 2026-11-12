@@ -48,7 +48,6 @@ export async function debugPlaidRawTransactions(env: Env, url: URL): Promise<any
       ok: false,
       account: acct.nickname,
       plaid_account_id: acct.plaid_account_id,
-      plaid_access_token_preview: (acct.plaid_access_token || "").substring(0, 20) + "...",
       error: e?.message || String(e)
     };
   }
