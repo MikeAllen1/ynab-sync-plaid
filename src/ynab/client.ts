@@ -264,3 +264,14 @@ export async function ynabGetPlanCurrency(env: Env): Promise<string> {
   runCache.set(cacheKey, currency);
   return currency;
 }
+
+export async function ynabGetDeletedAccountTransactions(env: Env, ynabAccountId: string, sinceDate: string): Promise<any[]> {
+  const url = `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts/${encodeURIComponent(ynabAccountId)}/transactions?since_date=${encodeURIComponent(sinceDate)}&last_knowledge_of_server=1`;
+  const resp = await ynabFetchWithRetry(env, url, {
+    method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` }
+  });
+  const data: any = await readJsonBody(resp);
+  if (!resp.ok) throw new Error(`YNAB deleted transaction read failed: ${resp.status} - ${JSON.stringify(data)}`);
+  if (!Array.isArray(data?.data?.transactions)) throw new Error("YNAB deleted transaction read returned an invalid response envelope.");
+  return data.data.transactions;
+}
