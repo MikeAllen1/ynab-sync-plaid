@@ -48,7 +48,8 @@ src/
 
   lock/
     sync-lock-do.ts        The SyncLock Durable Object (one writer at a time)
-    lock.ts                Acquire / renew / release, with a KV fallback
+    lock.ts                Acquire / renew / release (Durable Object only; no KV fallback: writes stop
+                           if the lock can't be reached)
 
   ui/
     dashboard-page.ts      /dashboard (HTML + its small script)

@@ -10,8 +10,11 @@ Nothing is sent anywhere except Plaid, YNAB, and (only if you set it up) your al
 
 ## How it's protected
 
-- Every endpoint that reads or changes data requires the `x-admin-token` header, compared in constant time.
-  Pages ask for the token in the browser and keep it in that browser's local storage.
+- Every endpoint that reads or changes data requires the admin token, compared in constant time. The pages
+  send it once to `/session`, which returns a one-hour session in a `__Host-` cookie marked `Secure`, `HttpOnly`
+  and `SameSite=Strict`. The token is never stored in the browser or readable by page scripts. Scripts can send
+  it in the `x-admin-token` header instead.
+- State-changing requests made with the session cookie must come from the worker's own origin.
 - Plaid webhooks are verified (signed JWT, body hash, key fetched from Plaid).
 - The dashboard and setup pages send `X-Frame-Options: DENY` and a `frame-ancestors 'none'` policy.
 - Writes run under a single lock, so concurrent requests can't race.
