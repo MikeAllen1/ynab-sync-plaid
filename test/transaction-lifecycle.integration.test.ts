@@ -36,6 +36,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     pending: false
   };
   let phase: "pending" | "posted" = "pending";
+  const syncCursors: string[] = [];
   const env = {
     ACCOUNT_MAP: JSON.stringify([account]),
     PLAID_ENV: "production",
@@ -55,14 +56,18 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     if (url.hostname === "production.plaid.com") {
       if (url.pathname === "/transactions/sync") {
-        const isSecond = phase === "posted";
-        return Response.json({
-          added: isSecond ? [] : [pending],
-          modified: isSecond ? [posted] : [],
-          removed: [],
-          next_cursor: isSecond ? "cursor-posted" : "cursor-pending",
-          has_more: false
-        });
+        const body = JSON.parse(String(init?.body || "{}"));
+        syncCursors.push(String(body.cursor || ""));
+        if (phase === "pending" && body.cursor === "cursor-start") {
+          return Response.json({ added: [pending], modified: [], removed: [], next_cursor: "cursor-page-1", has_more: true });
+        }
+        if (phase === "pending" && body.cursor === "cursor-page-1") {
+          return Response.json({ added: [], modified: [], removed: [], next_cursor: "cursor-pending", has_more: false });
+        }
+        if (phase === "posted" && body.cursor === "cursor-pending") {
+          return Response.json({ added: [], modified: [posted], removed: [], next_cursor: "cursor-posted", has_more: false });
+        }
+        return Response.json({ added: [], modified: [], removed: [], next_cursor: body.cursor || "cursor-posted", has_more: false });
       }
       if (url.pathname === "/transactions/get") {
         return Response.json({ transactions: [phase === "pending" ? pending : posted], total_transactions: 1 });
@@ -118,6 +123,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     assert.equal(ynabRows[0].cleared, "uncleared");
     assert.equal(ynabRows[0].amount, -6500);
     assert.equal(ynabRows[0].memo, "Pending");
+    assert.deepEqual(syncCursors.slice(0, 2), ["cursor-start", "cursor-page-1"], "all Plaid sync pages must be fetched before the cursor is committed");
 
     phase = "posted";
     resetRunCache();
@@ -129,6 +135,7 @@ test("full sync lifecycle converts one pending charge to posted in the same YNAB
     assert.equal(ynabRows[0].amount, -6750);
     assert.equal(ynabRows[0].memo, null);
     assert.equal(state.get("cursor:plaid-checking"), "cursor-posted");
+    assert.equal(syncCursors[2], "cursor-pending");
 
     resetRunCache();
     const third = await syncAccountEngine(env, account, [], { trigger: "lifecycle-repeat", runId: "lifecycle-3" });
