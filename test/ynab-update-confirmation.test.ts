@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ynabUpdateTransactions } from "../src/ynab/client";
 
-const env = { YNAB_BUDGET_ID: "budget", YNAB_TOKEN: "token" } as any;
+const env = { YNAB_BUDGET_ID: "budget", YNAB_TOKEN: "token", SYNC_LOCK: { idFromName: () => "test", get: () => ({ fetch: async () => Response.json({ reserved: true }) }) } } as any;
 const updates = [{ id: "tx-1", cleared: "cleared" }, { id: "tx-2", cleared: "cleared" }];
 
 test("YNAB update response confirms every requested transaction", async () => {
