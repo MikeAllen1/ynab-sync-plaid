@@ -1,8 +1,9 @@
 const baseUrl = process.env.WORKER_BASE_URL;
+const healthToken = process.env.HEALTH_TOKEN;
 const adminToken = process.env.ADMIN_TOKEN;
 
-if (!baseUrl || !adminToken) {
-  throw new Error("WORKER_BASE_URL and ADMIN_TOKEN GitHub Actions secrets must be configured.");
+if (!baseUrl || (!healthToken && !adminToken)) {
+  throw new Error("WORKER_BASE_URL and HEALTH_TOKEN (preferred) or ADMIN_TOKEN GitHub Actions secrets must be configured.");
 }
 
 const workerUrl = new URL(baseUrl);
@@ -11,29 +12,40 @@ if (workerUrl.protocol !== "https:") {
 }
 const origin = workerUrl.origin;
 
-const sessionResponse = await fetch(new URL("/session", origin), {
-  method: "POST",
-  headers: {
-    Origin: origin,
-    "x-admin-token": adminToken
-  },
-  signal: AbortSignal.timeout(15_000)
-});
-if (!sessionResponse.ok) {
-  throw new Error(`Production health monitor could not establish an admin session (HTTP ${sessionResponse.status}).`);
-}
+let healthResponse;
+if (healthToken) {
+  // Read-only credential: a minimal /health summary, nothing that can change state.
+  healthResponse = await fetch(new URL("/health", origin), {
+    headers: { "x-health-token": healthToken },
+    signal: AbortSignal.timeout(15_000),
+    cache: "no-store"
+  });
+} else {
+  console.warn("::warning::Using ADMIN_TOKEN for the health monitor. Set a read-only HEALTH_TOKEN (Worker secret and Actions secret) and delete the ADMIN_TOKEN Actions secret.");
+  const sessionResponse = await fetch(new URL("/session", origin), {
+    method: "POST",
+    headers: {
+      Origin: origin,
+      "x-admin-token": adminToken
+    },
+    signal: AbortSignal.timeout(15_000)
+  });
+  if (!sessionResponse.ok) {
+    throw new Error(`Production health monitor could not establish an admin session (HTTP ${sessionResponse.status}).`);
+  }
 
-const setCookie = sessionResponse.headers.get("set-cookie");
-const cookie = setCookie?.split(";")[0];
-if (!cookie || !cookie.startsWith("__Host-ynab_admin=")) {
-  throw new Error("Production health monitor did not receive the expected secure admin session cookie.");
-}
+  const setCookie = sessionResponse.headers.get("set-cookie");
+  const cookie = setCookie?.split(";")[0];
+  if (!cookie || !cookie.startsWith("__Host-ynab_admin=")) {
+    throw new Error("Production health monitor did not receive the expected secure admin session cookie.");
+  }
 
-const healthResponse = await fetch(new URL("/health", origin), {
-  headers: { Cookie: cookie },
-  signal: AbortSignal.timeout(15_000),
-  cache: "no-store"
-});
+  healthResponse = await fetch(new URL("/health", origin), {
+    headers: { Cookie: cookie },
+    signal: AbortSignal.timeout(15_000),
+    cache: "no-store"
+  });
+}
 if (!healthResponse.ok) {
   throw new Error(`Production health endpoint returned HTTP ${healthResponse.status}.`);
 }

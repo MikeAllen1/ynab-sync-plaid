@@ -27,5 +27,9 @@ jobs:
       - name: Check production Worker
         env:
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          # Preferred: a read-only token that can only read the health summary.
+          HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}
+          # Legacy fallback, used only when HEALTH_TOKEN isn't set. Delete this
+          # secret once HEALTH_TOKEN is in place.
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: node scripts/check-production-health.mjs

@@ -28,7 +28,7 @@ import { auditAccounts } from "./audit/audit";
 import { reconcileAllVsBank } from "./audit/reconcile";
 import { DEFAULT_SKIP_RULES } from "./constants";
 import { STUCK_LOG_KEY, getItemHealth, runItemHealthCheck, sendConnectionAlert, tracePendingRows } from "./health/items";
-import { health, readJson } from "./health/status";
+import { health, healthSummaryForMonitor, readJson } from "./health/status";
 import { isSyncEnabled, lockedJson } from "./lock/lock";
 import { plaidCall } from "./plaid/client";
 import { debugPlaidRawTransactions, resetRunCache } from "./plaid/fetch";
@@ -216,6 +216,17 @@ export const workerEntry = {
     }
 
     if (url.pathname === "/health") {
+      // Monitors authenticate with the read-only HEALTH_TOKEN and get only the fields
+      // a monitor needs: no account rows, balances or transaction diagnostics, and no
+      // way to change anything. The admin token still gets the full report.
+      const healthToken = req.headers.get("x-health-token");
+      if (healthToken !== null) {
+        if (req.method !== "GET") return json({ error: "GET only" }, 405);
+        if (!env.HEALTH_TOKEN) return json({ error: "HEALTH_TOKEN is not configured" }, 401);
+        if (env.HEALTH_TOKEN === env.ADMIN_TOKEN) return json({ error: "HEALTH_TOKEN must be different from ADMIN_TOKEN" }, 500);
+        if (!constantTimeEqual(healthToken, env.HEALTH_TOKEN)) return json({ error: "unauthorized" }, 401);
+        return json(healthSummaryForMonitor(await health(env)));
+      }
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
       return json(await health(env));
