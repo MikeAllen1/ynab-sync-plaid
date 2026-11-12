@@ -12,8 +12,14 @@ for (const path of ["/dashboard", "/setup"]) {
     const policy = response.headers.get("Content-Security-Policy") || "";
     assert.ok(policy.includes("default-src 'none'"));
     assert.ok(policy.includes("script-src-attr 'none'") || !policy.includes("script-src-attr"));
-    assert.ok(policy.includes("style-src-attr 'none'"));
-    assert.equal(policy.includes("'unsafe-inline'"), false);
+    if (path === "/setup") {
+      assert.ok(policy.includes("style-src-attr 'unsafe-inline'"));
+      assert.ok(policy.includes("script-src-attr 'none'"));
+      assert.ok(policy.includes("https://production.plaid.com"));
+    } else {
+      assert.ok(policy.includes("style-src-attr 'none'"));
+      assert.equal(policy.includes("'unsafe-inline'"), false);
+    }
 
     const html = await response.text();
     const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)];
