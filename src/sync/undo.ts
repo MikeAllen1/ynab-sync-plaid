@@ -25,21 +25,44 @@ export interface UndoBatch {
 }
 
 export async function getUndoLog(env: Env): Promise<UndoBatch[]> {
+  let durableReadError: unknown = null;
   if (env.SYNC_LOCK) {
     try {
       const stub = env.SYNC_LOCK.get(env.SYNC_LOCK.idFromName("global"));
       const response = await stub.fetch(`https://sync-lock/history/get?key=${UNDO_LOG_KV_KEY}`);
-      if (response.ok) {
-        const data: any = await response.json();
-        if (Array.isArray(data.items)) return data.items as UndoBatch[];
-      }
-    } catch { /* legacy read is a dashboard/recovery fallback only */ }
+      if (!response.ok) throw new Error(`Durable undo history read failed (${response.status})`);
+      const data: any = await response.json();
+      if (data.items === null) return [];
+      if (!Array.isArray(data.items)) throw new Error("Durable undo history returned an invalid payload");
+      return validateUndoHistory(data.items);
+    } catch (error) { durableReadError = error; }
+  } else {
+    durableReadError = new Error("SYNC_LOCK is required to read durable undo history");
   }
-  try {
-    const raw = await env.SYNC_STATE.get(UNDO_LOG_KV_KEY);
-    if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return parsed; }
-  } catch { /* caller sees empty legacy history; append still fails closed without DO */ }
-  return [];
+
+  // Legacy KV is a migration fallback only. Corrupt history is never converted
+  // into an empty list, because that would make committed writes appear non-undoable.
+  const raw = await env.SYNC_STATE.get(UNDO_LOG_KV_KEY);
+  if (raw === null) {
+    if (durableReadError) throw new Error(`UNDO_LOG_UNREADABLE: durable undo history is unavailable and no legacy history exists (${String((durableReadError as any)?.message || durableReadError)}).`);
+    return [];
+  }
+  let parsed: any;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error("UNDO_LOG_UNREADABLE: saved undo history is not valid JSON. No undo operation was attempted."); }
+  if (!Array.isArray(parsed)) throw new Error("UNDO_LOG_UNREADABLE: saved undo history is not an array. No undo operation was attempted.");
+  return validateUndoHistory(parsed);
+}
+
+function validateUndoHistory(value: any[]): UndoBatch[] {
+  for (const [index, batch] of value.entries()) {
+    if (!batch || typeof batch !== "object" || typeof batch.ts !== "string" ||
+        !Array.isArray(batch.items) || batch.items.some((item: any) =>
+          !item || typeof item.id !== "string" || typeof item.account !== "string")) {
+      throw new Error(`UNDO_LOG_UNREADABLE: saved undo history entry ${index + 1} is malformed. No undo operation was attempted.`);
+    }
+  }
+  return value as UndoBatch[];
 }
 
 // Called by the engine the moment YNAB accepts new rows, so even a run that fails
