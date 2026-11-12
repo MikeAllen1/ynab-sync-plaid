@@ -41,6 +41,7 @@ export async function fetchWithRetry(
       // Do not shorten the provider's requested delay. Defer to the next scheduled
       // execution when honoring it would exceed this worker's bounded retry window.
       if (backoffMs > 10000) return resp;
+      try { await resp.body?.cancel(); } catch { /* the next attempt remains the safe recovery path */ }
       await sleep(backoffMs);
       attempt++;
       continue;
