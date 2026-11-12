@@ -123,6 +123,22 @@ export class SyncLock {
     }
 
 
+    // Admin session epoch: every session cookie carries the epoch it was issued in and
+    // is honored only while it matches. Bumping it signs out every browser at once.
+    if (url.pathname === "/session/epoch" && request.method === "GET") {
+      const epoch = await this.state.storage.get<number>("admin_session_epoch");
+      return Response.json({ epoch: typeof epoch === "number" ? epoch : 0 });
+    }
+    if (url.pathname === "/session/epoch/bump" && request.method === "POST") {
+      const epoch = await this.state.storage.transaction(async txn => {
+        const current = await txn.get<number>("admin_session_epoch");
+        const next = (typeof current === "number" ? current : 0) + 1;
+        await txn.put("admin_session_epoch", next);
+        return next;
+      });
+      return Response.json({ epoch });
+    }
+
     if (url.pathname === "/ynab-rate/reserve" && request.method === "POST") {
       // YNAB documents a 200-request/hour token limit. Keep this worker below it
       // so dashboard/manual API use has headroom. This is a rolling window, not a
