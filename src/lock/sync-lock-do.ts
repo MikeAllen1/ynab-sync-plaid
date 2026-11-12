@@ -175,11 +175,42 @@ export class SyncLock {
       return Response.json({ ok: true, count });
     }
 
+    if (url.pathname === "/history/replace" && request.method === "POST") {
+      let body: any;
+      try {
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).byteLength > 256 * 1024) return Response.json({ error: "history payload too large" }, { status: 413 });
+        body = JSON.parse(raw);
+      } catch { return Response.json({ error: "invalid history payload" }, { status: 400 }); }
+      const key = String(body?.key || "");
+      const limit = HISTORY_LIMITS[key];
+      if (!limit || !Array.isArray(body?.items) || body.items.length > limit) return Response.json({ error: "invalid history replacement" }, { status: 400 });
+      await this.state.storage.transaction(async txn => { await txn.put(`history:${key}`, body.items); });
+      return Response.json({ ok: true, count: body.items.length });
+    }
+
     if (url.pathname === "/history/get" && request.method === "GET") {
       const key = url.searchParams.get("key") || "";
       if (!HISTORY_LIMITS[key]) return Response.json({ error: "invalid history key" }, { status: 400 });
       const stored = await this.state.storage.get<unknown[]>(`history:${key}`);
       return Response.json({ items: Array.isArray(stored) ? stored : null });
+    }
+
+    if (url.pathname === "/ynab-rate/reserve" && request.method === "POST") {
+      const windowMs = 60 * 60 * 1000;
+      const limit = 180;
+      const result = await this.state.storage.transaction(async txn => {
+        const stored = await txn.get<number[]>("ynab-rate:timestamps");
+        const live = (Array.isArray(stored) ? stored : []).filter(ts => Number.isFinite(ts) && now - ts < windowMs);
+        if (live.length >= limit) {
+          await txn.put("ynab-rate:timestamps", live);
+          return { reserved: false, retry_after_ms: Math.max(0, live[0] + windowMs - now) };
+        }
+        live.push(now);
+        await txn.put("ynab-rate:timestamps", live);
+        return { reserved: true, remaining: limit - live.length };
+      });
+      return Response.json(result, { status: result.reserved ? 200 : 429 });
     }
 
     if (url.pathname === "/acquire" && request.method === "POST") {
