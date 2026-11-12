@@ -3,6 +3,7 @@ import { plaidCall } from "./client";
 import { getAccounts } from "../store/accounts";
 import { VERIFY_WINDOW_DAYS } from "../sync/engine";
 import { AccountConfig, Env, PlaidTransaction, normalizePlaidTxn } from "../types";
+import { todayInTimeZone } from "../util/dates";
 
 // ---------- Debug endpoints ----------
 
@@ -22,12 +23,8 @@ export async function debugPlaidRawTransactions(env: Env, url: URL): Promise<any
     };
   }
 
-  const end = new Date();
-  const start = new Date();
-  start.setUTCDate(end.getUTCDate() - days);
-
-  const start_date = toIsoDate(start);
-  const end_date = toIsoDate(end);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -days);
 
   let plaid: any;
 
@@ -108,28 +105,25 @@ export async function getRecentRawTransactionsDetailed(
     cached = { days: fetchDays, result: await fetchRawWindow(env, acct, fetchDays, Math.max(count, 500)) };
     runCache.set(key, cached);
   }
-  const start = new Date(); start.setUTCDate(start.getUTCDate() - want);
-  const start_date = toIsoDate(start);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -want);
   return { ...cached.result, start_date, transactions: cached.result.transactions.filter((t: PlaidTransaction) => t.date >= start_date) };
 }
 
 export async function fetchRawWindow(
   env: Env, acct: AccountConfig, days: number, count: number
 ): Promise<{ transactions: PlaidTransaction[]; truncated: boolean; start_date: string; end_date: string }> {
-  const end = new Date();
-  const start = new Date();
-  start.setUTCDate(end.getUTCDate() - Math.max(1, Math.min(100, days)));
-
-  const start_date = toIsoDate(start);
-  const end_date = toIsoDate(end);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -Math.max(1, Math.min(100, days)));
   const pageSize = Math.max(1, Math.min(500, count));
   const MAX_TRANSACTIONS = 1000;
 
   const collected: any[] = [];
   let offset = 0;
-  let total = Infinity;
+  let total: number | null = null;
+  const seenIds = new Set<string>();
 
-  while (collected.length < total && collected.length < MAX_TRANSACTIONS) {
+  while ((total === null || collected.length < total) && collected.length < MAX_TRANSACTIONS) {
     const plaid = await plaidCall(env, "/transactions/get", {
       access_token: acct.plaid_access_token,
       start_date,
@@ -142,16 +136,28 @@ export async function fetchRawWindow(
       }
     });
 
-    const page = plaid.transactions || [];
+    const page = plaid.transactions;
+    if (!Array.isArray(page)) throw new Error("Plaid /transactions/get returned a non-array transactions page.");
+    const pageTotal = plaid.total_transactions;
+    if (!Number.isSafeInteger(pageTotal) || pageTotal < 0) throw new Error("Plaid /transactions/get returned an invalid total_transactions value.");
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) throw new Error("Plaid /transactions/get total_transactions changed during pagination; verification snapshot is inconsistent.");
+    if (page.length > pageSize) throw new Error("Plaid /transactions/get returned more rows than the requested page size.");
+    if (page.length === 0 && collected.length < total) throw new Error("Plaid /transactions/get returned an empty page before the reported total was reached.");
+    for (const raw of page) {
+      if (!raw || typeof raw.transaction_id !== "string" || !raw.transaction_id) throw new Error("Plaid /transactions/get returned a row without a transaction ID.");
+      if (seenIds.has(raw.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages; verification snapshot is inconsistent.");
+      if (raw.account_id !== acct.plaid_account_id) throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
+      seenIds.add(raw.transaction_id);
+    }
     collected.push(...page);
-    total = Number.isFinite(plaid.total_transactions) ? plaid.total_transactions : collected.length;
     offset += page.length;
     if (page.length === 0) break;
   }
 
   return {
     transactions: collected.map(normalizePlaidTxn),
-    truncated: Number.isFinite(total) && collected.length < total,
+    truncated: total !== null && collected.length < total,
     start_date,
     end_date
   };
@@ -163,7 +169,12 @@ export function toIsoDate(d: Date): string {
 
 export function lookbackDate(env: Env): string {
   void env; // reserved for a future per-env configurable window
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - YNAB_LOOKBACK_DAYS);
-  return toIsoDate(d);
+  return shiftCalendarDate(todayInTimeZone(env), -YNAB_LOOKBACK_DAYS);
+}
+
+// Shift an ISO calendar date without applying the host runtime's timezone.
+export function shiftCalendarDate(date: string, days: number): string {
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(timestamp) || !Number.isInteger(days)) throw new Error("Invalid calendar date shift.");
+  return new Date(timestamp + days * 86400000).toISOString().slice(0, 10);
 }
