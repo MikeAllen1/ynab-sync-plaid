@@ -3,7 +3,7 @@ import { BOOTSTRAP_OVERLAP_DAYS, CC_TRANSFER_CUTOFF_DEFAULT, IDENTITY_HORIZON_DA
 import { readJson } from "../health/status";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "../plaid/client";
-import { getRecentRawTransactionsDetailed, lookbackDate, toIsoDate } from "../plaid/fetch";
+import { getRecentRawTransactionsDetailed, lookbackDate, shiftCalendarDate, toIsoDate } from "../plaid/fetch";
 import { PayeeAlias, getPayeeAliases } from "../rules/payee-aliases";
 import { getSkipRules, matchingSkipRule } from "../rules/skip-rules";
 import { getAccountAutomationSettings, getAccounts, isCreditCardAccount, settingForAccount } from "../store/accounts";
@@ -739,7 +739,7 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   // twice. Normally that is the usual lookback; for older charges it is widened to 5
   // days before the oldest, capped at IDENTITY_HORIZON_DAYS.
   const today = todayInTimeZone(env);
-  const horizonFloor = toIsoDate(new Date(Date.now() - IDENTITY_HORIZON_DAYS * 86400000));
+  const horizonFloor = shiftCalendarDate(today, -IDENTITY_HORIZON_DAYS);
   let snapshotStart = lookbackDate(env);
   for (const it of items) {
     if (!creatable.has(it.L)) continue;
