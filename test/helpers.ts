@@ -1,10 +1,12 @@
 import type { AccountConfig, PlaidTransaction } from "../src/types";
 import type { RoutingContext } from "../src/sync/engine";
 
+let nextTestTransactionId = 0;
+
 /** A Plaid transaction. Plaid's sign: positive = money out, negative = money in. */
 export function txn(o: Partial<PlaidTransaction> & { name: string; amount: number }): PlaidTransaction {
   return {
-    transaction_id: o.transaction_id || "tx-" + Math.random().toString(36).slice(2),
+    transaction_id: o.transaction_id ?? `test-tx-${++nextTestTransactionId}`,
     pending_transaction_id: null, account_id: "acct-checking", iso_currency_code: "USD",
     date: "2026-03-10", authorized_date: null, merchant_name: null, pending: false,
     pfc_primary: null, pfc_detailed: null, ...o,
