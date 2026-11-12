@@ -36,7 +36,7 @@ test("Plaid setup uses a nonce for scripts and only retains Plaid-required inlin
   assert.match(csp, /https:\/\/production\.plaid\.com/);
   assert.match(csp, /frame-src https:\/\/cdn\.plaid\.com/);
   assert.doesNotMatch(html, /\sonclick\s*=|\sonerror\s*=|\sstyle\s*=/i);
-  assert.match(html, /data-action="add-bank"/);
+  assert.ok(html.includes('<button id="addBtn">Link a new bank</button>'));
   assert.match(html, /<script nonce="[^"]+" src="https:\/\/cdn\.plaid\.com/);
 });
 
