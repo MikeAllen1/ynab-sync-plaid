@@ -30,7 +30,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   };
   try {
     const result = await fetchRawWindow(env, account, 30, 2);
-    assert.deepEqual(offsets, [0, 2]);
+    assert.deepEqual(offsets, [0, 2, 0, 2], "multi-page history is read twice to detect offset drift");
     assert.deepEqual(result.transactions.map(t => t.transaction_id), ["p1", "p2", "p3"]);
     assert.equal(result.truncated, false);
   } finally {
@@ -38,7 +38,7 @@ test("Plaid transaction window follows offset pagination until total_transaction
   }
 });
 
-test("Plaid transaction window stops safely on an empty page even when provider total is inconsistent", async () => {
+test("Plaid transaction window rejects an empty page before provider total is reached", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -46,10 +46,11 @@ test("Plaid transaction window stops safely on an empty page even when provider 
     return Response.json({ transactions: [], total_transactions: 100 });
   };
   try {
-    const result = await fetchRawWindow(env, account, 30, 2);
+    await assert.rejects(
+      () => fetchRawWindow(env, account, 30, 2),
+      /empty page before total_transactions was reached/
+    );
     assert.equal(calls, 1);
-    assert.equal(result.transactions.length, 0);
-    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
