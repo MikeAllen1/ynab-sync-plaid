@@ -222,3 +222,26 @@ export async function ynabDeleteTransaction(env: Env, transactionId: string): Pr
 
   return data;
 }
+
+/** Read back both sides of a YNAB transfer. A successful create response alone
+ * does not prove that the paired register row points to the intended account. */
+export async function ynabVerifyTransferPair(
+  env: Env,
+  transactionId: string,
+  sourceAccountId: string,
+  targetAccountId: string,
+  expectedAmount: number
+): Promise<void> {
+  const source = await ynabGetTransaction(env, transactionId);
+  if (!source) throw new Error(`YNAB transfer verification failed: source transaction ${transactionId} is missing.`);
+  if (source.account_id !== sourceAccountId || Number(source.amount) !== expectedAmount ||
+      !source.transfer_transaction_id || source.transfer_account_id !== targetAccountId) {
+    throw new Error(`YNAB transfer verification failed: source transaction ${transactionId} is not paired to the expected account and amount.`);
+  }
+  const target = await ynabGetTransaction(env, source.transfer_transaction_id);
+  if (!target || target.id !== source.transfer_transaction_id ||
+      target.account_id !== targetAccountId || target.transfer_account_id !== sourceAccountId ||
+      target.transfer_transaction_id !== source.id || Number(target.amount) !== -expectedAmount) {
+    throw new Error(`YNAB transfer verification failed: paired transaction for ${transactionId} is missing or inconsistent.`);
+  }
+}
