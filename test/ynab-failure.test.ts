@@ -148,3 +148,36 @@ test("partially committed YNAB update batch converges when individual rows are r
     assert.equal(rows.get("row-b")?.cleared, "cleared");
   } finally { globalThis.fetch = originalFetch; }
 });
+
+
+test("a YNAB update committed before a lost response is safe to retry per row", async () => {
+  const originalFetch = globalThis.fetch;
+  const rows = new Map([
+    ["row-a", { id: "row-a", cleared: "uncleared" }],
+    ["row-b", { id: "row-b", cleared: "uncleared" }]
+  ]);
+  let calls = 0;
+  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    const body = JSON.parse(String(init?.body || "{}"));
+    for (const patch of body.transactions || []) {
+      const row = rows.get(patch.id);
+      if (row) Object.assign(row, patch);
+    }
+    if (calls === 1) throw new Error("connection reset after YNAB committed the batch");
+    return Response.json({ data: { transaction_ids: (body.transactions || []).map((x: any) => x.id) } });
+  };
+  try {
+    const result = await ynabUpdateEach(env, [
+      { id: "row-a", cleared: "cleared" },
+      { id: "row-b", cleared: "cleared" }
+    ]);
+    assert.equal(result.updated, 2);
+    assert.deepEqual(result.failed, []);
+    assert.equal(rows.get("row-a")?.cleared, "cleared");
+    assert.equal(rows.get("row-b")?.cleared, "cleared");
+    assert.equal(calls, 3, "the ambiguous batch is retried as two idempotent single-row updates");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
