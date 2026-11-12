@@ -19,10 +19,22 @@ import { Env } from "../types";
 // mark is set further imports are refused, so a slower concurrent migration can never
 // bring back a value a run has since changed or removed.
 
-export const DURABLE_STATE_PREFIXES = [
+// The prefixes the first (all-at-once) migration covered. A Durable Object marked with the
+// old single "state_migrated" flag has migrated exactly these.
+export const LEGACY_MIGRATED_PREFIXES = [
   "cursor:", "posted:", "pending:", "links:", "rejected:", "bootstrapped:", "bootstrap_date:",
   "cc_epoch:", "undo_intent:", "update_failed:", "too_old_logged:", "legs_not_worker:",
   "last_account_sync:", "quarantine_logged:"
+] as const;
+
+// Migration is tracked per prefix, so a prefix added later still has its KV value carried
+// over once. (With one flag for everything, a new prefix would read as missing: for
+// "sync:enabled" that would silently un-pause a paused sync on deploy.)
+export const DURABLE_STATE_PREFIXES = [
+  ...LEGACY_MIGRATED_PREFIXES,
+  // The global pause switch. In KV, a sync running in another Cloudflare location could
+  // keep reading "enabled" for up to a minute after Pause; here it is read strongly.
+  "sync:enabled"
 ] as const;
 
 export function isDurableStateKey(key: string): boolean {
@@ -45,9 +57,11 @@ async function call(env: Env, path: string, body?: unknown): Promise<any> {
 
 async function migrateFromKv(env: Env, kv: KVNamespace): Promise<void> {
   const status = await call(env, "/state/migrated");
-  if (status?.migrated === true) return;
+  const done = new Set<string>(Array.isArray(status?.prefixes) ? status.prefixes : []);
+  const pending = DURABLE_STATE_PREFIXES.filter(p => !done.has(p));
+  if (pending.length === 0) return;
   const entries: [string, string][] = [];
-  for (const prefix of DURABLE_STATE_PREFIXES) {
+  for (const prefix of pending) {
     let cursor: string | undefined;
     do {
       const page: any = await kv.list({ prefix, cursor });
@@ -63,7 +77,7 @@ async function migrateFromKv(env: Env, kv: KVNamespace): Promise<void> {
   for (let i = 0; i < entries.length || i === 0; i += BATCH) {
     const batch = entries.slice(i, i + BATCH);
     const last = i + BATCH >= entries.length;
-    await call(env, "/state/import", { entries: batch, mark_migrated: last });
+    await call(env, "/state/import", { entries: batch, mark_migrated: last, prefixes: pending });
     if (last) break;
   }
 }

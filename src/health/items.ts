@@ -1,4 +1,5 @@
 import { health, readJson } from "./status";
+import { ALERT_TIMEOUT_MS } from "../util/http";
 import { getRecentRawTransactionsDetailed, lookbackDate, plaidItemCached } from "../plaid/fetch";
 import { getAuditedAccounts, isCreditCardAccount } from "../store/accounts";
 import { flushEventLog, getEventLog } from "../store/event-log";
@@ -332,6 +333,7 @@ export async function sendConnectionAlert(env: Env, broken: ItemHealth[]): Promi
     : `⚠️ YNAB sync: ${broken.length} bank connections ${needsReauth ? "need attention" : "have problems"}`;
 
   const resp = await fetch("https://api.resend.com/emails", {
+        signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,

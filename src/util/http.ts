@@ -8,6 +8,10 @@ import { Env } from "../types";
 // + jitter. We honor Retry-After but cap the wait so a Worker never blocks for
 // long — if a 429 won't clear within the cap, we give up and the next scheduled
 // run picks up where we left off (the sync is idempotent via import_id + cursor).
+export const OUTBOUND_TIMEOUT_MS = 30_000;
+// Alert emails and alert webhooks are best-effort and some run while the sync lock is held.
+export const ALERT_TIMEOUT_MS = 10_000;
+
 export async function fetchWithRetry(
   url: string,
   init: RequestInit,
@@ -24,7 +28,10 @@ export async function fetchWithRetry(
     if (typeof options !== "boolean" && options.beforeAttempt) await options.beforeAttempt();
     let resp: Response;
     try {
-      resp = await fetch(url, init);
+      // Bounded: a hung provider call would otherwise hold the sync lock until its lease
+      // expires. A timed-out write is an ambiguous transport error like any other (not
+      // replayed); stable import ids let the next run reconcile it.
+      resp = await fetch(url, init.signal ? init : { ...init, signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS) });
     } catch (error) {
       // A transport error after a mutation is ambiguous: the remote service may
       // have committed it. Never replay writes unless the caller explicitly

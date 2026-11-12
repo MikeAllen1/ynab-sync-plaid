@@ -82,3 +82,12 @@ test("a transient renewal failure does not suppress the next lease check", async
     activeLeases.delete(lock.id);
   }
 });
+
+test("the lock lease outlasts the longest gap between renewals of a live run", async () => {
+  const { SYNC_LOCK_TTL_SECONDS, LEASE_RENEW_EVERY_MS } = await import("../src/lock/lock");
+  const { OUTBOUND_TIMEOUT_MS, ALERT_TIMEOUT_MS } = await import("../src/util/http");
+  // Renewal is skipped for up to a minute, then one call can take the full timeout plus
+  // the longest backoff fetchWithRetry waits (10 s) before the next check.
+  const worstGapMs = LEASE_RENEW_EVERY_MS + OUTBOUND_TIMEOUT_MS + 10_000 + ALERT_TIMEOUT_MS;
+  assert.ok(SYNC_LOCK_TTL_SECONDS * 1000 >= worstGapMs * 1.5, `lease ${SYNC_LOCK_TTL_SECONDS}s vs worst renewal gap ${worstGapMs}ms`);
+});
