@@ -121,7 +121,7 @@ non-destructive runtime read/transaction probe.
 
 Create a Cloudflare API token scoped to this account with only **Workers Scripts Read** and
 **Workers KV Storage Read**. Do not grant Edit/Write permissions for this verification task.
-The script does not print or retrieve secret values.
+The script does not print or retrieve secret values. It confirms that the token is active and can perform the required read operations, but Cloudflare's token-verification endpoint does not disclose the token's complete policy; confirm in the Cloudflare dashboard that it has no Edit/Write permissions and that account membership is least-privilege.
 
 PowerShell:
 
