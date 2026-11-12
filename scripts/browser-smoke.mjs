@@ -42,9 +42,12 @@ try {
   assert.match(dashboardCsp, /script-src-attr 'none'/);
   assert.doesNotMatch(dashboardCsp, /unsafe-inline/);
   assert.equal(await page.locator("[onclick], [onerror], [style]").count(), 0);
+  const addRuleFunction = await page.evaluate(() => typeof window.addRule);
+  assert.equal(addRuleFunction, "function", "dashboard script did not initialize; page errors: " + JSON.stringify(pageErrors) + "; CSP violations: " + JSON.stringify(cspViolations));
+  assert.equal(await page.locator('[data-action="add-rule"]').count(), 1, "add-rule control missing");
   await page.locator('[data-tab="rules"]').click();
   await page.locator('[data-action="add-rule"]').click();
-  assert.equal(await page.locator("#rules .item").count(), 1, "dashboard delegated click handler did not add a rule");
+  assert.equal(await page.locator("#rules .card.item").count(), 1, "dashboard delegated click handler did not add a rule; page errors: " + JSON.stringify(pageErrors) + "; CSP violations: " + JSON.stringify(cspViolations));
 
   await page.route("https://cdn.plaid.com/**", route => route.fulfill({
     status: 200,
