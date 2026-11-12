@@ -147,7 +147,7 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
   // settings. Replacing either provider account ID under that identity would
   // silently attach old cursors, posted pins, links, and YNAB history to a
   // different bank account. Token rotation is allowed; identity remapping is not.
-  const incomingNicknames = new Set(incoming.map((item: any) => String(item.nickname).trim().toLowerCase().replace(/\\s+/g, "-")));
+  const incomingNicknames = new Set(incoming.map((item: any) => String(item.nickname).trim().toLowerCase().replace(/\s+/g, "-")));
   for (const previous of stored) {
     if (incomingNicknames.has(previous.nickname)) continue;
     if (incoming.some((item: any) => String(item.ynab_account_id || "").trim() === previous.ynab_account_id)) {
