@@ -245,3 +245,22 @@ export async function ynabVerifyTransferPair(
     throw new Error(`YNAB transfer verification failed: paired transaction for ${transactionId} is missing or inconsistent.`);
   }
 }
+
+/** Read the destination plan's configured ISO currency. Cached for this Worker run. */
+export async function ynabGetPlanCurrency(env: Env): Promise<string> {
+  const cacheKey = "ynab_plan_currency";
+  const cached = runCache.get(cacheKey);
+  if (cached) return cached;
+  const resp = await ynabFetchWithRetry(env,
+    `https://api.ynab.com/v1/plans/${encodeURIComponent(env.YNAB_BUDGET_ID)}/settings`,
+    { method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` } }
+  );
+  const data: any = await readJsonBody(resp);
+  if (!resp.ok) throw new Error(`YNAB plan settings failed: ${resp.status} - ${JSON.stringify(data)}`);
+  const currency = data?.data?.settings?.currency_format?.iso_code;
+  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) {
+    throw new Error("YNAB plan settings returned no valid ISO currency code; transaction writes were blocked.");
+  }
+  runCache.set(cacheKey, currency);
+  return currency;
+}
