@@ -109,7 +109,7 @@ export async function ynabUpdateEach(env: Env, updates: any[]): Promise<{ update
     return { ...(await ynabUpdateTransactions(env, updates)), failed: [] };
   } catch (batchError: any) {
     const message = String(batchError?.message || batchError);
-    if (/^YNAB update failed: 400\\b/.test(message)) {
+    if (/^YNAB update failed: 400\b/.test(message)) {
       if (updates.length === 1) return { updated: 0, failed: [{ id: updates[0].id, error: message }] };
       let updated = 0;
       const failed: { id: string; error: string }[] = [];
