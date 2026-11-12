@@ -40,7 +40,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
   // A 2xx response with an invalid envelope is not an empty successful result.
   // Validate the critical fields used to advance cursors or reconcile records.
   const invalid = (reason: string): never => {
-    throw new Error(`Plaid ${path} returned an invalid response: ${reason}`);
+    throw new Error(`Plaid ${path} returned an invalid response (invalid page): ${reason}`);
   };
   if (path === "/transactions/sync") {
     for (const field of ["added", "modified", "removed"]) {
