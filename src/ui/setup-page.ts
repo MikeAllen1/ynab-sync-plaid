@@ -78,12 +78,21 @@ function setStatus(msg, ok) { var s = document.getElementById("status"); s.textC
 async function post(path, body) {
   if (tokenInput.value.trim()) await authenticate();
   var response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (response.status === 401) throw sessionEnded();
   return response.json();
 }
 async function get(path) {
   if (tokenInput.value.trim()) await authenticate();
   var response = await fetch(path, { credentials: "same-origin" });
+  if (response.status === 401) throw sessionEnded();
   return response.json();
+}
+// Sessions last an hour; say so plainly instead of a bare "unauthorized".
+function sessionEnded() {
+  var msg = "Your admin session has ended (sessions last an hour). Enter the admin token above, then try again. Nothing was changed.";
+  setStatus(msg, false);
+  try { tokenInput.focus(); } catch (e) { /* ignore */ }
+  return new Error(msg);
 }
 
 function openLink(linkToken, receivedRedirectUri, onSuccess) {
@@ -195,7 +204,8 @@ function loadBanks() {
     if (t) openLink(t, location.href, sessionStorage.getItem("link_mode") === "create" ? onLinked : onReconnected);
   }
 })();
-get("/session").then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
+// First visit: no session yet is normal, so this check stays quiet on 401.
+fetch("/session", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) { if (d && d.ok) loadBanks(); }).catch(function () {});
 </script>
 </body>
 </html>`;

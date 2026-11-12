@@ -307,11 +307,35 @@ async function api(path, opts, raw) {
   // Raw output only shows what you asked to see (Recovery actions and your own
   // actions), not the dashboard's background refreshes.
   if (raw !== false) $("output").textContent = when(new Date().toISOString()) + "  " + path + String.fromCharCode(10) + (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+  if (resp.status === 401) { sessionEnded(); throw new Error("Signed out: your admin session has ended. Enter the admin token under Settings, then try again. Nothing was changed."); }
   if (resp.status === 409 && data && data.busy) throw new Error(data.error);
   if (!resp.ok) throw new Error((data && data.error) || ("HTTP " + resp.status));
   return data;
 }
 function quiet(path) { return api(path, undefined, false); }
+// Sessions last an hour. When one ends (or is signed out elsewhere), say so once and
+// open Settings at the token box, instead of every panel failing with "unauthorized".
+var sessionTimer = null, sessionEndedShown = false;
+function sessionEnded() {
+  if (sessionTimer) { clearTimeout(sessionTimer); sessionTimer = null; }
+  if (sessionEndedShown) return;
+  sessionEndedShown = true;
+  setOverall("Signed out", "");
+  attention(["Your admin session has ended (sessions last an hour). Enter the admin token under Settings to continue. Nothing was changed."], "warn");
+  openTab("settings");
+  try { $("token").focus(); } catch (e) { /* not focusable yet */ }
+}
+// Five minutes before the session ends, say so, so a long edit isn't lost to a 401.
+function trackSession(expiresAt) {
+  sessionEndedShown = false;
+  if (sessionTimer) clearTimeout(sessionTimer);
+  var ms = expiresAt ? new Date(expiresAt).getTime() - Date.now() : NaN;
+  if (!isFinite(ms)) return;
+  sessionTimer = setTimeout(function () {
+    attention(["Your admin session ends in about 5 minutes. Save what you're editing, then enter the admin token under Settings to stay signed in."], "warn");
+    sessionTimer = setTimeout(sessionEnded, 5 * 60 * 1000);
+  }, Math.max(0, ms - 5 * 60 * 1000));
+}
 // Raw-output helper. Actions that change something (webhooks, refresh, test alert) are
 // POST-only on the server, so pass "POST" for those; read-only debug views stay GET.
 async function show(path, btn, method) {
@@ -884,6 +908,7 @@ async function saveToken() {
     var data = await resp.json();
     if (!resp.ok) throw new Error(data.error || "Authentication failed.");
     $("token").value = "";
+    trackSession(data.expires_at);
     await loadAll(); loadItems(false);
     attention(["Authenticated. The admin token is held in an HttpOnly browser cookie, not Web Storage."], "ok");
   } catch (e) { attention([e.message], "bad"); }
@@ -971,10 +996,12 @@ async function saveAccounts() {
     return;
   }
   try {
-    await api("/session", undefined, false);
+    var sess = await api("/session", undefined, false);
+    trackSession(sess && sess.expires_at);
     loadAll();
     loadItems(false);
   } catch (e) {
+    sessionEndedShown = false;
     setOverall("No token", "");
     attention(["Add your admin token under Settings."], "warn");
     openTab("settings");

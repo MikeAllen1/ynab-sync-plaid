@@ -48,7 +48,7 @@ import { Env } from "./types";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
-import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, json, requireAdmin } from "./util/http";
+import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_SECONDS, NO_FRAMING, constantTimeEqual, createAdminSessionValue, json, requireAdmin, sessionExpiresAt } from "./util/http";
 import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
@@ -127,18 +127,18 @@ export const workerEntry = {
         const supplied = req.headers.get("x-admin-token") || "";
         if (!supplied || !constantTimeEqual(supplied, env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
         const sessionValue = await createAdminSessionValue(env.ADMIN_TOKEN);
-        return new Response(JSON.stringify({ ok: true }), {
+        return new Response(JSON.stringify({ ok: true, expires_at: new Date(Date.now() + ADMIN_SESSION_SECONDS * 1000).toISOString() }), {
           headers: {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionValue)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`
+            "Set-Cookie": `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionValue)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${ADMIN_SESSION_SECONDS}`
           }
         });
       }
       if (req.method === "GET") {
         const unauthorized = await requireAdmin(req, env);
         if (unauthorized) return unauthorized;
-        return json({ ok: true });
+        return json({ ok: true, expires_at: sessionExpiresAt(req) });
       }
       if (req.method === "DELETE") {
         return new Response(JSON.stringify({ ok: true }), {

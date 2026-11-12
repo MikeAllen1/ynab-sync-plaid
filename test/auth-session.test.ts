@@ -34,7 +34,9 @@ test("signed HttpOnly session cookie authenticates without exposing the admin to
     headers: { Cookie: `__Host-ynab_admin=${encodeURIComponent(value)}` }
   }), env, ctx);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true });
+  const body: any = await response.json();
+  assert.equal(body.ok, true);
+  assert.ok(Date.parse(body.expires_at) > Date.now(), "the page is told when the session ends");
 });
 
 test("session exchange rejects cross-origin requests and incorrect tokens", async () => {
@@ -73,4 +75,13 @@ test("expired, future-dated, and tampered admin session cookies are rejected", a
     }), env, ctx);
     assert.equal(response.status, 401);
   }
+});
+
+test("the dashboard turns a 401 into a clear signed-out message instead of failing every panel", async () => {
+  const { dashboardHtml } = await import("../src/ui/dashboard-page");
+  const html = await dashboardHtml().text();
+  assert.match(html, /resp\.status === 401\) \{ sessionEnded\(\)/);
+  assert.match(html, /function trackSession\(/);
+  const { setupHtml } = await import("../src/ui/setup-page");
+  assert.match(setupHtml(), /response\.status === 401\) throw sessionEnded\(\)/);
 });
