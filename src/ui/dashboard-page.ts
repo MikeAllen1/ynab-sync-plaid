@@ -351,7 +351,7 @@ function renderBanner(list) {
   if (!list || !list.length) { el.classList.add("initially-hidden"); el.innerHTML = ""; return; }
   el.classList.remove("initially-hidden");
   var bad = list.some(function (x) { return x.level === "bad"; });
-  el.style.display = "";
+  el.classList.remove("initially-hidden");
   el.className = "attention" + (bad ? "" : " warn");
   // Only touch the DOM when the text changed, so a screen reader doesn't re-read the
   // whole banner on every refresh.
