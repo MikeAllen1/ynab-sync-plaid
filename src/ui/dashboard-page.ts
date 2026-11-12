@@ -260,15 +260,15 @@ export function dashboardHtml(): Response {
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
       <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" onclick="undo(this)">Undo…</button></div>
-      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" onclick="show('/force-refresh', this)">Refresh Plaid</button></div>
+      <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" onclick="show('/force-refresh', this, 'POST')">Refresh Plaid</button></div>
       <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/plaid/raw?account=' + a + '&days=30&count=100'); })">Show</button></div>
       <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" onclick="tracePending(this)">Explain</button></div>
       <div id="traceOut"></div>
       <div class="recovery"><div><strong>Stuck pending rows (saved automatically)</strong><p>Every hourly health check saves the reason whenever a pending row should have moved to posted but didn't, including rows you've since fixed by hand. Kept 30 days after they're resolved.</p></div><button class="btn" onclick="loadStuck(this)">Refresh</button></div>
       <div id="stuckOut"></div>
       <div class="recovery"><div><strong>What YNAB has</strong><p>The YNAB register for the selected account (30 days), with worker ownership flags.</p></div><button class="btn" onclick="needAccount(function(a){ show('/debug/ynab-register?account=' + a + '&days=30'); })">Show</button></div>
-      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" onclick="show('/configure-webhooks', this)">Configure</button></div>
-      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" onclick="show('/test-alert', this)">Send test</button></div>
+      <div class="recovery"><div><strong>Re-register webhooks</strong><p>Points every bank login's Plaid webhook at this worker.</p></div><button class="btn" onclick="show('/configure-webhooks', this, 'POST')">Configure</button></div>
+      <div class="recovery"><div><strong>Test alert email</strong><p>Sends a fake "needs reconnect" email to confirm alerts work.</p></div><button class="btn" onclick="show('/test-alert', this, 'POST')">Send test</button></div>
       <div class="recovery"><div><strong>Live logs</strong><p>From your PC: <code>npx wrangler tail</code> in the project folder.</p></div></div>
     </div>
     <div class="block">
@@ -311,9 +311,11 @@ async function api(path, opts, raw) {
   return data;
 }
 function quiet(path) { return api(path, undefined, false); }
-async function show(path, btn) {
+// Raw-output helper. Actions that change something (webhooks, refresh, test alert) are
+// POST-only on the server, so pass "POST" for those; read-only debug views stay GET.
+async function show(path, btn, method) {
   await busy(btn, async function () {
-    try { await api(path); openTab("recovery"); flash(["Done. The result is under Raw output."], "ok"); } catch (e) { flash([e.message], "bad"); }
+    try { await api(path, method ? { method: method } : undefined); openTab("recovery"); flash(["Done. The result is under Raw output."], "ok"); } catch (e) { flash([e.message], "bad"); }
   });
 }
 function needAccount(fn) { var a = selected(); if (!a) { alert("Pick an account in the toolbar first."); return; } fn(encodeURIComponent(a)); }
