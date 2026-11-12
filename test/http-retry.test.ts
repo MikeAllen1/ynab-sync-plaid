@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchWithRetry, readJsonBody } from "../src/util/http";
+import { fetchWithRetry, readJsonBody, retryAfterDelayMs } from "../src/util/http";
 import { activeLeases, LEASE_RENEW_EVERY_MS } from "../src/lock/lock";
 import type { Env } from "../src/types";
 
@@ -110,7 +110,7 @@ test("fetchWithRetry retries 429 using Retry-After and returns the successful re
   }
 });
 
-test("fetchWithRetry caps Retry-After and stops after the configured retry count", async () => {
+test("fetchWithRetry defers a Retry-After longer than the bounded Worker retry window", async () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
   const waits: number[] = [];
@@ -127,8 +127,8 @@ test("fetchWithRetry caps Retry-After and stops after the configured retry count
   try {
     const response = await fetchWithRetry("https://provider.test/resource", { method: "GET" }, 2);
     assert.equal(response.status, 503);
-    assert.equal(calls, 3);
-    assert.deepEqual(waits, [10000, 10000]);
+    assert.equal(calls, 1, "a provider Retry-After of 60 seconds is returned to the scheduler, not shortened");
+    assert.deepEqual(waits, []);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.setTimeout = originalSetTimeout;
@@ -156,4 +156,11 @@ test("readJsonBody preserves JSON and safely summarizes HTML gateway errors", as
   const parsed = await readJsonBody(new Response("<html><body>Bad Gateway</body></html>", { status: 502 }));
   assert.match(parsed.non_json_response, /Bad Gateway/);
   assert.ok(parsed.non_json_response.length <= 120);
+});
+
+
+test("Retry-After accepts HTTP dates without shortening provider delays", () => {
+  const now = Date.parse("2026-01-01T00:00:00Z");
+  assert.equal(retryAfterDelayMs("Thu, 01 Jan 2026 00:00:03 GMT", 0, now), 3000);
+  assert.equal(retryAfterDelayMs("120", 0, now), 120000);
 });
