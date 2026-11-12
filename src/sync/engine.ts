@@ -579,6 +579,27 @@ export function buildOwnership(
 // windowImport: "all" creates rows for anything in the account's import window (the
 // backfill safety net); "pending" only pending rows (bootstrap); "none" uses the window
 // only to verify what is still pending.
+// Fail closed when a person edits a YNAB row while this sync is planning. YNAB
+// does not offer conditional PATCH/DELETE, so this preflight narrows (but cannot
+// eliminate) the race window between read and write.
+export function concurrentUpdateConflictFields(
+  before: YNABExistingTransaction,
+  latest: YNABExistingTransaction,
+  update: Record<string, any>
+): string[] {
+  return Object.keys(update)
+    .filter(k => k !== "id" && k !== "_via" && k !== "_payee" && k !== "account_id")
+    .filter(k => JSON.stringify((before as any)[k]) !== JSON.stringify((latest as any)[k]));
+}
+
+export function hasConcurrentDeleteConflict(
+  before: YNABExistingTransaction,
+  latest: YNABExistingTransaction
+): boolean {
+  const fields = ["date", "amount", "payee_name", "memo", "cleared", "approved", "category_id", "flag_color", "payee_id", "transfer_transaction_id", "transfer_account_id"];
+  return fields.some(k => JSON.stringify((before as any)[k]) !== JSON.stringify((latest as any)[k]));
+}
+
 export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules: SkipRule[], options: SyncOptions = {}): Promise<any> {
   const isCard = isCreditCardAccount(acct);
   const pid = acct.plaid_account_id;
@@ -1348,13 +1369,50 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     }
     await env.SYNC_STATE.delete(undoIntentKey);
   }
-  const cleanUpdates = updates.map(u => { const { _via, _payee, ...rest } = u; return rest; });
-  const updatedResult = await ynabUpdateEach(env, cleanUpdates);
+  // Re-read existing YNAB rows immediately before mutation. A manual edit to a
+  // field this plan would overwrite (or any visible edit to a row slated for
+  // deletion) is preserved and blocks this page's cursor checkpoint.
+  let safeUpdates = updates;
+  let safeDeletes = deletes;
+  const preflightUpdateFailures: { id: string; error: string }[] = [];
+  const preflightDeleteErrors: { id: string; error: string }[] = [];
+  if (updates.length > 0 || deletes.length > 0) {
+    const latest = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+    const latestById = new Map(latest.map(r => [r.id, r]));
+    safeUpdates = updates.filter(u => {
+      const before = snapshot.find(r => r.id === u.id);
+      const now = latestById.get(u.id);
+      if (!before || !now) {
+        preflightUpdateFailures.push({ id: u.id, error: "Transaction disappeared during sync planning; refresh and reconcile before retrying." });
+        return false;
+      }
+      if (concurrentUpdateConflictFields(before, now, u).length > 0) {
+        preflightUpdateFailures.push({ id: u.id, error: "A field this sync planned to change was edited in YNAB during the sync; manual change preserved." });
+        return false;
+      }
+      return true;
+    });
+    safeDeletes = deletes.filter(d => {
+      const before = snapshot.find(r => r.id === d.row.id);
+      const now = latestById.get(d.row.id);
+      if (!before || !now) return true; // A concurrent delete is already converged.
+      if (hasConcurrentDeleteConflict(before, now)) {
+        preflightDeleteErrors.push({ id: d.row.id, error: "Transaction was edited in YNAB during the sync; automatic retirement was skipped." });
+        const L = replacedFor.get(d.row.id);
+        if (L) delete newLinks[L];
+        return false;
+      }
+      return true;
+    });
+  }
+  const cleanUpdates = safeUpdates.map(u => { const { _via, _payee, ...rest } = u; return rest; });
+  const updateAttempt = await ynabUpdateEach(env, cleanUpdates);
+  const updatedResult = { updated: updateAttempt.updated, failed: [...preflightUpdateFailures, ...updateAttempt.failed] };
   const failedUpdateIds = new Set(updatedResult.failed.map(f => f.id));
 
   let deleted = 0;
-  const deleteErrors: any[] = [];
-  for (const d of deletes) {
+  const deleteErrors: any[] = [...preflightDeleteErrors];
+  for (const d of safeDeletes) {
     try { await ynabDeleteTransaction(env, d.row.id); deleted++; }
     catch (e: any) {
       deleteErrors.push({ id: d.row.id, error: e.message });
@@ -1434,17 +1492,17 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (changed) await env.SYNC_STATE.put(tooOldKey, JSON.stringify(logged));
   }
 
-  // Persist state only when it changed.
+  // Persist dependent state first. The Plaid cursor is the page commit record and
+  // must be the final write; any preceding failure leaves the old cursor for replay.
   const survivingIds = new Set(snapshot.filter(r => !deleteIds.has(r.id) || failedDeletes.has(r.id)).map(r => r.id));
   const mergedLinks: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...links, ...newLinks })) if (survivingIds.has(v)) mergedLinks[k] = v;
-  if (!options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
+  const partial = updatedResult.failed.length > 0 || deleteErrors.length > 0;
   if (JSON.stringify(mergedLinks) !== linksJsonAtStart) await env.SYNC_STATE.put(linksKey, JSON.stringify(mergedLinks));
   await persistPostedMap();
   if (legCacheChanged) await env.SYNC_STATE.put(legCacheKey, JSON.stringify(legCache));
   if (Object.keys(legacyPendingMap).length > 0) await env.SYNC_STATE.delete(pendingKey); // superseded by derived ids + links
-
-  const partial = updatedResult.failed.length > 0 || deleteErrors.length > 0;
+  if (!partial && !options.backfillOnly && cursor !== cursorAtStart) await env.SYNC_STATE.put(cursorKey, cursor);
   return {
     // "partial": everything else was written, but some updates or removals weren't.
     status: partial ? "partial" : "ok",
@@ -1584,10 +1642,17 @@ export async function bootstrap(env: Env, nickname: string, runId?: string, forc
   let hasMore = true;
   while (hasMore) {
     const resp = await plaidCall(env, "/transactions/sync", { access_token: acct.plaid_access_token, cursor, count: 500 });
+    if (!resp || !Array.isArray(resp.added) || !Array.isArray(resp.modified) ||
+        !Array.isArray(resp.removed) || typeof resp.next_cursor !== "string" ||
+        typeof resp.has_more !== "boolean") {
+      throw new Error("Plaid bootstrap returned an invalid sync page; cursor was not committed");
+    }
+    if (resp.has_more && resp.next_cursor === cursor) {
+      throw new Error("Plaid bootstrap pagination cursor did not advance; cursor was not committed");
+    }
     cursor = resp.next_cursor;
     hasMore = resp.has_more;
   }
-  await env.SYNC_STATE.put(`cursor:${acct.plaid_account_id}`, cursor);
 
   const { floor, catchUp, backfillDays } = await bootstrapPlan(env, acct);
   // A brand-new YNAB account: its starting balance is the bank's posted balance right
@@ -1600,6 +1665,10 @@ export async function bootstrap(env: Env, nickname: string, runId?: string, forc
   const skipRules = await getSkipRules(env);
   const settings = settingForAccount(await getAccountAutomationSettings(env), acct);
   const result = await syncAccountEngine(env, acct, skipRules, { backfillOnly: true, windowImport: catchUp ? "all" : "pending", backfillDays, accountSetting: settings, trigger: "bootstrap", runId });
+  if (result?.status !== "ok") {
+    throw new Error(`Bootstrap import did not complete cleanly (status: ${String(result?.status || "unknown")}); initial Plaid cursor was not committed and bootstrap can be safely retried.`);
+  }
+  await env.SYNC_STATE.put(`cursor:${acct.plaid_account_id}`, cursor);
   await env.SYNC_STATE.put(`bootstrapped:${acct.plaid_account_id}`, "1");
 
   return {
