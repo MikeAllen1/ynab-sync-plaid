@@ -4,3 +4,5 @@ node_modules/
 wrangler.toml
 *.log
 .DS_Store
+test-results/
+playwright-report/

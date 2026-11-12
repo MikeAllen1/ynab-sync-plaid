@@ -26,6 +26,22 @@ Fixes from a workflow audit of the dashboard and setup page:
   results for a previous account choice are cleared when you pick another.
 - `npm run test:browser`: end-to-end browser tests for these workflows (needs Chrome).
 
+Usability fixes from a dashboard audit (`npm run test:ui`: browser tests at desktop and phone width, run in CI):
+
+- The result of a button (or why it failed) stays in view while you scroll, instead of appearing at the top of
+  the page; click it to put it away.
+- An account that needs reconnecting has a **Reconnect** button on its row (the banner used to point to a
+  "Settings > Reconnect" that didn't exist), and the setup page marks the bank that needs it.
+- **Undo…** lists the recent syncs to pick from instead of asking you to type a number.
+- **Sync now** and **Re-scan** name the account they'll act on when one is picked in the toolbar.
+- Turning an account's sync on reminds you to set its YNAB balance to the bank's posted balance first, and asks on
+  Save. Saving (or adding on the setup page) a second bank account that feeds the same YNAB account asks first.
+- Activity on a phone shows one card per event instead of a squeezed table.
+- The KPI tiles and tabs explain themselves (hover text, and a line under the tabs).
+- Account names keep ordinary short words in normal case ("Car Loan", "Bank of the West"); acronyms like PNC, TD
+  and USAA stay capitals.
+- The admin token box describes the one-hour session; the setup page keeps its messages in view.
+
 Reliability fixes from a failure-mode and load review (`test/failure-modes.test.ts`, `scripts/bench/`).
 
 - A provider that times out twice is skipped for the rest of that run, so a Plaid or YNAB outage costs

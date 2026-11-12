@@ -70,7 +70,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     .btn.live { box-shadow: inset 0 0 0 2px var(--warn-dot); }
     .btn.live::after { content: " (live)"; font-weight: 600; }
     .btn[aria-busy="true"] { opacity: .7; cursor: progress; }
-    .flash { border-radius: var(--r-md); padding: 12px 16px; margin-bottom: 12px; border-left: 3px solid var(--ok-dot); background: var(--ok-bg); color: var(--ok); }
+    .flash { position: sticky; top: 8px; z-index: 5; box-shadow: var(--shadow); border-radius: var(--r-md); padding: 12px 16px; margin-bottom: 12px; border-left: 3px solid var(--ok-dot); background: var(--ok-bg); color: var(--ok); }
     .flash.warn { border-left-color: var(--warn-dot); background: var(--warn-bg); color: var(--warn); }
     .flash.bad { border-left-color: var(--bad-dot); background: var(--bad-bg); color: var(--bad); }
     .flash ul { margin: 0; padding-left: 18px; }
@@ -79,6 +79,11 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     details.adv summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 6px; }
     .btn.warning { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
     .btn.danger { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-border); }
+    .sync-note[hidden] { display: none; }
+    .sync-note { display: block; margin-top: 4px; color: var(--warn); }
+    .row-act { display: flex; width: max-content; margin-top: 6px; }
+    .btn.small { min-height: 28px; padding: 0 10px; font-size: 12px; }
+    .undo-pick { padding: 4px 0 14px; } .undo-pick label { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
     .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
     .btn[disabled] { opacity: .5; cursor: default; }
     select, input[type=text], input[type=password], input:not([type]) { padding: 8px 10px; border: 1px solid var(--control-border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; width: 100%; }
@@ -115,6 +120,17 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     .recovery p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
     pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: var(--r-md); overflow: auto; max-height: 460px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     .small { font-size: 12px; color: var(--muted); }
+    .table td.ev-detail { color: var(--muted); }
+    @media (max-width: 760px) {
+      /* Activity on a phone: one card per event instead of a squeezed five-column table. */
+      .table.stack tr:first-child { display: none; }
+      .table.stack tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "what amt" "when acct" "detail detail"; gap: 2px 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+      .table.stack td { display: block; padding: 0; border: 0; }
+      .table.stack .ev-what { grid-area: what; font-weight: 650; } .table.stack .ev-amt { grid-area: amt; }
+      .table.stack .ev-when { grid-area: when; font-size: 12px; color: var(--muted); } .table.stack .ev-acct { grid-area: acct; font-size: 12px; color: var(--muted); text-align: right; }
+      .table.stack .ev-detail { grid-area: detail; font-size: 12px; overflow-wrap: anywhere; }
+      .table.stack tr.needs { background: var(--warn-bg); } .table.stack tr.needs td { background: none; }
+    }
     .money-neg { color: var(--bad); } .money-pos { color: var(--ok); }
     @media (max-width: 760px) {
       .shell { padding: 24px 16px 60px; }
@@ -136,13 +152,13 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
   </header>
 
   <div class="card kpis">
-    <div class="kpi"><div class="kpi-label">Accounts healthy</div><div id="kpiHealthy" class="kpi-value">—</div><div id="kpiHealthyNote" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Unexplained difference</div><div id="kpiDiff" class="kpi-value">—</div><div id="kpiDiffNote" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Pending purchases at bank</div><div id="kpiPending" class="kpi-value">—</div><div id="kpiPendingAsOf" class="small"></div></div>
-    <div class="kpi"><div class="kpi-label">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
+    <div class="kpi"><div class="kpi-label" title="Accounts whose bank connection works, whose last sync succeeded and whose YNAB balance matches the bank">Accounts healthy</div><div id="kpiHealthy" class="kpi-value">—</div><div id="kpiHealthyNote" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="How far YNAB balances are from the bank balances, after setting aside differences the worker can explain (such as a charge still pending)">Unexplained difference</div><div id="kpiDiff" class="kpi-value">—</div><div id="kpiDiffNote" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="Charges the bank lists as pending; each should be in YNAB as an uncleared row">Pending purchases at bank</div><div id="kpiPending" class="kpi-value">—</div><div id="kpiPendingAsOf" class="small"></div></div>
+    <div class="kpi"><div class="kpi-label" title="When the worker last finished a sync without errors">Last successful sync</div><div id="kpiLast" class="kpi-value">—</div></div>
   </div>
 
-  <div id="flash" class="flash" role="status" aria-live="polite" style="display:none"></div>
+  <div id="flash" class="flash" role="status" aria-live="polite" title="Click to dismiss" style="display:none"></div>
   <section id="attention" class="attention" role="status" aria-live="polite" style="display:none"></section>
 
   <div id="accountRows" class="card rows"><div class="row"><span class="row-name">Loading…</span></div></div>
@@ -161,13 +177,14 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
   <p id="dryNote" class="note"></p>
 
   <nav class="tabs" role="tablist" aria-label="Sections">
-    <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-activity" data-tab="activity">Activity</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-health" data-tab="health">Account health</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-reconcile" data-tab="reconcile">Transaction reconcile</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-rules" data-tab="rules">Rules</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-settings" data-tab="settings">Settings</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-recovery" data-tab="recovery">Recovery</button>
+    <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-activity" data-tab="activity" title="What the worker changed in YNAB, newest first." data-hint="What the worker changed in YNAB, newest first.">Activity</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-health" data-tab="health" title="Bank balance vs YNAB balance for each account." data-hint="Bank balance vs YNAB balance for each account.">Account health</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-reconcile" data-tab="reconcile" title="Bank transactions matched to YNAB rows, one by one. Read-only." data-hint="Bank transactions matched to YNAB rows, one by one. Read-only.">Transaction reconcile</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-rules" data-tab="rules" title="Bank items to skip, merchant names that mean the same, and names for transfers." data-hint="Bank items to skip, merchant names that mean the same, and names for transfers.">Rules</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-settings" data-tab="settings" title="Pause, sign in, bank connections and each account's sync settings." data-hint="Pause, sign in, bank connections and each account's sync settings.">Settings</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-recovery" data-tab="recovery" title="Undo a sync, ask Plaid to refresh, and look at raw data when something's wrong." data-hint="Undo a sync, ask Plaid to refresh, and look at raw data when something's wrong.">Recovery</button>
   </nav>
+  <p id="tabHint" class="note" style="margin-top:-16px">What the worker changed in YNAB, newest first.</p>
 
   <section id="tab-activity" role="tabpanel" aria-label="activity" class="panel active">
     <div class="block" id="previewBlock" style="display:none">
@@ -242,7 +259,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
     </div>
     <div class="block">
       <h2>Admin token</h2>
-      <p class="hint">Stored only in this browser.</p>
+      <p class="hint">Signs this browser in for one hour. The token itself isn't kept; the session lives in a secure cookie. Sign out ends every signed-in browser.</p>
       <div class="grid2"><div><input id="token" type="password" placeholder="Admin token" aria-label="Admin token" autocomplete="off" /></div><div class="actions" style="margin:0"><button class="btn primary" data-click="saveToken">Save</button><button class="btn ghost" data-click="clearToken">Sign out</button></div></div>
     </div>
     <div class="block">
@@ -262,6 +279,7 @@ export function dashboardHtml(nonce: string = newCspNonce()): Response {
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
     <div class="block card item">
       <div class="recovery"><div><strong>Undo a sync</strong><p>Removes the rows a sync added. It does not reverse anything else that sync did (rows it marked posted, pending rows it removed, amounts it updated). Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" data-click="undo">Undo…</button></div>
+      <div id="undoPick"></div>
       <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" data-click="show" data-path="/force-refresh" data-method="POST">Refresh Plaid</button></div>
       <div class="recovery"><div><strong>What Plaid sees</strong><p>Raw bank transactions for the selected account (30 days).</p></div><button class="btn" data-click="showPlaidRaw">Show</button></div>
       <div class="recovery"><div><strong>Why is a pending row stuck?</strong><p>For the selected account: every pending row the worker created, what Plaid says about that charge right now, and why it hasn't moved to posted. Read-only.</p></div><button class="btn" data-click="tracePending">Explain</button></div>
@@ -291,7 +309,16 @@ var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases
 function $(id) { return document.getElementById(id); }
 function dry() { return $("dryRun").checked; }
 function selected() { return $("accountSelect").value; }
-function pretty(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
+function pretty(n) {
+  // Nicknames are lowercase-with-dashes ("bank-of-the-west"). Show them as words: short words with
+  // no vowels and known acronyms in capitals (PNC, TD, USAA), small joining words lowercase.
+  var ACR = ["usaa", "hsa", "fsa", "ira", "hysa", "heloc", "boa", "bofa"], SMALL = ["of", "the", "and", "at", "for", "to", "in", "on", "a"];
+  return String(n || "").split("-").map(function (w, i) {
+    if (/\\d/.test(w) || (w.length <= 4 && !/[aeiouy]/.test(w)) || ACR.indexOf(w) >= 0) return w.toUpperCase();
+    if (i > 0 && SMALL.indexOf(w) >= 0) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
+}
 function money(n) { if (n == null || isNaN(n)) return "—"; return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function milli(n) { return money(Number(n || 0) / 1000); }
 function when(iso) { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return iso || ""; } }
@@ -367,7 +394,7 @@ async function busy(btn, fn) {
   var label = btn.textContent;
   btn.setAttribute("aria-busy", "true"); btn.disabled = true; btn.textContent = "Running…";
   try { return await fn(); }
-  finally { btn.removeAttribute("aria-busy"); btn.disabled = false; btn.textContent = label; }
+  finally { btn.removeAttribute("aria-busy"); btn.disabled = false; btn.textContent = label; if (btn.id === "btnSync" || btn.id === "btnRescan") scopeLabels(); }
 }
 
 // The result of your last action. It stays until your next action (or 2 minutes),
@@ -382,6 +409,8 @@ function flash(items, level) {
   el.innerHTML = "<ul>" + items.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>";
   flashTimer = setTimeout(function () { el.style.display = "none"; }, 120000);
 }
+// The result stays in view while you scroll (it's sticky); a click puts it away.
+$("flash").addEventListener("click", function () { flash([]); });
 // Backwards-compatible name used by the rules/settings code for action results.
 function attention(items, level) { flash(items, level === "ok" ? "ok" : level); }
 
@@ -402,6 +431,7 @@ function setOverall(text, cls) { var el = $("overall"); el.className = "pill " +
 function openTab(name) {
   document.querySelectorAll(".tab").forEach(function (b) { var on = b.getAttribute("data-tab") === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
   document.querySelectorAll(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "tab-" + name); });
+  var tb = document.querySelector('.tab[data-tab="' + name + '"]'); if (tb) $("tabHint").textContent = tb.getAttribute("data-hint") || "";
   if (name === "settings") { loadItems(false); loadAccounts(); refreshGlobal(); }
   if (name === "rules") { loadRules(); loadAliases(); loadTLabels(); }
   if (name === "recovery") loadStuck();
@@ -424,6 +454,12 @@ document.querySelectorAll(".tab").forEach(function (b) {
 });
 document.querySelectorAll(".panel").forEach(function (p) { var n = p.id.replace(/^tab-/, ""); p.setAttribute("role", "tabpanel"); p.setAttribute("aria-labelledby", "tabbtn-" + n); p.removeAttribute("aria-label"); });
 
+// Sync now and Re-scan act on the account picked in the toolbar; say which on the buttons.
+function scopeLabels() {
+  var a = selected() ? pretty(selected()) : "";
+  if (!$("btnSync").getAttribute("aria-busy")) $("btnSync").textContent = a ? "Sync " + a + " now" : "Sync now";
+  if (!$("btnRescan").getAttribute("aria-busy")) $("btnRescan").textContent = a ? "Re-scan " + a : "Re-scan";
+}
 function updateDryNote() {
   var n = $("dryNote");
   n.textContent = dry() ? "Dry run is on: Sync now and Re-scan only preview and change nothing. Re-check and Transaction reconcile never change anything. Undo always previews and asks you to confirm." : "Dry run is off: Sync now and Re-scan will change YNAB. Re-check and Transaction reconcile never change anything. Undo still previews and asks you to confirm.";
@@ -497,7 +533,8 @@ function renderOverview(h) {
     var diffText = a.audit_unavailable ? "unknown" : d != null ? money(Math.abs(d)) : (a.account && a.bank_balance == null ? "can't check" : "—");
     var diffSub = a.audit_unavailable ? "health check unavailable" : a.account && a.bank_balance == null ? "bank balance unavailable" : a.explained_difference ? (a.explained_by || money(Math.abs(a.explained_difference)) + " explained") : "";
     if (a.checked_at) diffSub = [diffSub, "checked " + ago(a.checked_at)].filter(Boolean).join(" · ");
-    return '<div class="row"><span class="row-name">' + esc(pretty(n)) + (lvl[2] ? '<span class="secondary">' + esc(lvl[2]) + "</span>" : "") + "</span>" +
+    var reconnect = lvl[1] === "Needs reconnect" ? '<a class="btn small row-act" href="/setup" target="_blank" rel="noopener">Reconnect ↗</a>' : "";
+    return '<div class="row"><span class="row-name">' + esc(pretty(n)) + (lvl[2] ? '<span class="secondary">' + esc(lvl[2]) + "</span>" : "") + reconnect + "</span>" +
       '<span class="chip ' + safeCssClass(lvl[0], ["ok", "warn", "bad"]) + '">' + esc(lvl[1]) + '</span>' +
       '<span class="metric">Unexplained difference<strong>' + esc(diffText) + '</strong>' + esc(diffSub) + '</span>' +
       '<span class="metric">Bank pending, in YNAB<strong>' + esc(cov) + '</strong>' + esc(covSub) + '</span>' +
@@ -507,7 +544,7 @@ function renderOverview(h) {
   $("kpiHealthy").textContent = tracked ? healthy + " / " + tracked : (state.accounts.length ? "none tracked" : "—");
   $("kpiHealthyNote").textContent = tracked ? "includes accounts that are only health-checked" : "";
   $("kpiDiff").textContent = haveDiff ? money(diff) : "—";
-  var diffNotes = [];
+  var diffNotes = ["YNAB vs the bank, after differences the worker can explain"];
   if (explained > 0.01) diffNotes.push("plus " + money(explained) + " in known differences (listed under each account; they clear on their own)");
   if (state.auditTs) diffNotes.push("as of " + ago(state.auditTs));
   $("kpiDiffNote").textContent = diffNotes.join("; ");
@@ -556,11 +593,11 @@ async function loadEvents() {
       }
       return false;
     };
-    $("events").innerHTML = ev.length ? '<table class="table"><tr><th>When</th><th>Account</th><th>What</th><th class="num">Amount</th><th>Detail</th></tr>' +
+    $("events").innerHTML = ev.length ? '<table class="table stack"><tr><th>When</th><th>Account</th><th>What</th><th class="num">Amount</th><th>Detail</th></tr>' +
       ev.map(function (e, i) {
         var needs = NEEDS_YOU[e.action] && !resolved(e, i);
         var label = (EVENT_LABELS[e.action] || e.action) + (NEEDS_YOU[e.action] && !needs ? " (resolved since)" : "");
-        return "<tr" + (needs ? ' class="needs"' : "") + "><td>" + esc(when(e.ts)) + "</td><td>" + esc(pretty(e.account)) + "</td><td>" + esc(label) + '</td><td class="num">' + (e.amount != null ? milli(e.amount) : "") + "</td><td>" + esc(e.detail || "") + "</td></tr>";
+        return "<tr" + (needs ? ' class="needs"' : "") + '><td class="ev-when">' + esc(when(e.ts)) + '</td><td class="ev-acct">' + esc(pretty(e.account)) + '</td><td class="ev-what">' + esc(label) + '</td><td class="num ev-amt">' + (e.amount != null ? milli(e.amount) : "") + '</td><td class="ev-detail">' + esc(e.detail || "") + "</td></tr>";
       }).join("") + "</table>" : '<div class="empty">No activity recorded yet' + (selected() ? " for " + esc(pretty(selected())) : "") + ".</div>";
   } catch (e) { $("events").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
@@ -677,16 +714,27 @@ async function undo(btn) {
   await busy(btn, async function () {
     try {
       var list = await api("/undo?list=true");
-      if (!list.runs || !list.runs.length) { flash(["Nothing to undo."], "warn"); return; }
-      var menu = list.runs.map(function (r) { return r.index + ": " + when(r.ts) + " · " + r.trigger + " · " + r.count + " row(s) added"; }).join(String.fromCharCode(10));
-      var pick = prompt("Remove the rows which sync added? Enter its number:" + String.fromCharCode(10) + menu, "0");
-      if (pick === null) return;
-      var preview = await api("/undo?index=" + encodeURIComponent(pick));
-      if (!preview.target) { flash([preview.error || "No such sync."], "bad"); return; }
+      if (!list.runs || !list.runs.length) { $("undoPick").innerHTML = ""; flash(["Nothing to undo."], "warn"); return; }
+      // Pick a sync from a list (newest first); the preview and confirmation come next.
+      $("undoPick").innerHTML = '<div class="undo-pick" role="radiogroup" aria-label="Sync to undo"><div id="undoRuns">' + list.runs.map(function (r, i) {
+        var label = when(r.ts) + " · " + r.trigger + " · " + r.count + " row" + (r.count === 1 ? "" : "s") + " added";
+        return '<label><input type="radio" name="undoRun" value="' + esc(r.index) + '"' + (i === 0 ? " checked" : "") + " /> " + esc(label) + "</label>";
+      }).join("") + '</div><div class="actions"><button class="btn warning" data-click="undoPreview">Preview and undo</button><button class="btn ghost" data-click="undoCancel">Cancel</button></div></div>';
+    } catch (e) { flash([e.message], "bad"); }
+  });
+}
+async function undoPreview(btn) {
+  var picked = document.querySelector('input[name="undoRun"]:checked');
+  if (!picked) { flash(["Pick the sync to undo."], "warn"); return; }
+  await busy(btn, async function () {
+    try {
+      var preview = await api("/undo?index=" + encodeURIComponent(picked.value));
+      if (!preview.target) { flash([preview.error || "That sync isn't in the undo list any more."], "bad"); return; }
       if (!confirm(preview.message)) return;
       // Confirm by the previewed run's timestamp, never by list position.
       var r = await api("/undo?ts=" + encodeURIComponent(preview.target.ts) + "&confirm=true", { method: "POST" });
       if (r.ok === false && !r.undone) { flash([r.error], "bad"); return; }
+      $("undoPick").innerHTML = "";
       await loadAll();
       flash(["Undo removed " + r.deleted + " row(s)" + (r.kept && r.kept.length ? "; kept " + r.kept.length + " that have settled or are gone" : "") + "." + (r.errors && r.errors.length ? " " + r.errors.length + " couldn't be removed; they stay in the undo list so you can try again." : "")], r.errors && r.errors.length ? "bad" : "ok");
     } catch (e) { flash([e.message], "bad"); }
@@ -1010,7 +1058,8 @@ async function loadAccounts(force) {
       var st = state.settings.find(function (x) { return x.nickname === r.nickname; }) || {};
       var freq = [15, 30, 60, 120, 240].map(function (m) { return '<option value="' + m + '"' + (st.sync_frequency_minutes === m ? " selected" : "") + ">Every " + (m < 60 ? m + " min" : (m / 60) + " hr") + "</option>"; }).join("");
       return '<div class="card item" data-acct="' + i + '"><h3>' + esc(pretty(r.nickname)) + ' <span class="small">' + esc(r.institution || "") + (r.has_token ? " · token " + esc(r.token_preview) : " · no token") + "</span></h3><div class='grid2'>" +
-        '<div><label class="inline"><input type="checkbox" data-f="sync_enabled"' + (st.sync_enabled !== false ? " checked" : "") + ' /> Sync: the worker writes to this account</label></div>' +
+        '<div><label class="inline"><input type="checkbox" data-f="sync_enabled"' + (st.sync_enabled !== false ? " checked" : "") + ' /> Sync: the worker writes to this account</label>' +
+          '<span class="small sync-note" hidden>Before the first sync, set this account&rsquo;s YNAB balance to the bank&rsquo;s posted balance (reconcile it in YNAB). The worker never imports older history, so any difference stays until you fix it.</span></div>' +
         '<div><span class="field-label">Frequency</span><select aria-label="Frequency" data-f="sync_frequency_minutes">' + freq + "</select></div>" +
         (r.is_credit_card
           ? '<div><span class="small">Cards always import from the recent window (safety net); there is no switch for it.</span></div>'
@@ -1030,6 +1079,10 @@ async function loadAccounts(force) {
         '<div class="full"><span class="field-label">Replace access token (leave blank to keep)</span><input aria-label="Replace access token (leave blank to keep)" type="password" data-f="plaid_access_token" autocomplete="off" /></div>' +
         "</div></details></div></div>";
     }).join("") || '<div class="empty">No accounts yet. <a href="/setup">Add a bank</a>.</div>';
+    $("accounts").querySelectorAll('[data-f="sync_enabled"]').forEach(function (cb) {
+      var was = cb.checked;
+      cb.addEventListener("change", function () { cb.closest("div").querySelector(".sync-note").hidden = was || !cb.checked; });
+    });
   } catch (e) { $("accounts").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
 }
 async function saveAccounts(btn) {
@@ -1043,6 +1096,13 @@ async function saveAccounts(btn) {
     accounts.push(row);
     settings.push({ nickname: r.nickname, sync_enabled: val("sync_enabled"), backfill_enabled: val("backfill_enabled"), sync_frequency_minutes: Number(val("sync_frequency_minutes")), audit_enabled: val("audit_enabled") });
   });
+  // Two checks before writing: accounts whose sync is being turned on (their YNAB balance has
+  // to match the bank first), and one YNAB account fed by two bank accounts (imports twice).
+  var turnedOn = settings.filter(function (s) { var was = state.settings.find(function (x) { return x.nickname === s.nickname; }) || {}; return s.sync_enabled && was.sync_enabled === false; }).map(function (s) { return pretty(s.nickname); });
+  if (turnedOn.length && !confirm("Turn sync on for " + turnedOn.join(", ") + "?" + String.fromCharCode(10, 10) + "Before the first sync, set " + (turnedOn.length > 1 ? "each one's" : "its") + " YNAB balance to the bank's posted balance (reconcile it in YNAB). The worker never imports older history, so any difference stays until you fix it.")) return;
+  var byYnab = {}, shared = [];
+  accounts.forEach(function (a) { if (!a.ynab_account_id) return; if (byYnab[a.ynab_account_id]) shared.push(pretty(byYnab[a.ynab_account_id]) + " and " + pretty(a.nickname)); else byYnab[a.ynab_account_id] = a.nickname; });
+  if (shared.length && !confirm(shared.join("; ") + " feed the same YNAB account. Feeding one YNAB account from two bank accounts usually imports every transaction twice. Save anyway?")) return;
   await busy(btn, async function () {
     try {
       // expected_version: refuse to save over a change made elsewhere since this page
@@ -1077,6 +1137,7 @@ window.addEventListener("beforeunload", function (ev) {
     loadEvents(); $("traceOut").innerHTML = "";
     // The dry-run preview and reconcile results were for the previous choice.
     reconSeq++; $("recon").innerHTML = ""; $("previewBlock").style.display = "none";
+    scopeLabels();
   });
   updateDryNote();
   if (hashToken) {
@@ -1103,6 +1164,7 @@ window.addEventListener("beforeunload", function (ev) {
 var CLICK = {
   runSync: function (el) { runSync(el); }, recheck: function (el) { recheck(el); }, rescan: function (el) { rescan(el); },
   runReconcile: function (el) { runReconcile(el); }, undo: function (el) { undo(el); },
+  undoPreview: function (el) { undoPreview(el); }, undoCancel: function () { $("undoPick").innerHTML = ""; },
   tracePending: function (el) { tracePending(el); }, loadStuck: function (el) { loadStuck(el); },
   addRule: function () { addRule(); }, saveRules: function (el) { saveList("rules", el); },
   addAlias: function () { addAlias(); }, saveAliases: function (el) { saveList("aliases", el); },
