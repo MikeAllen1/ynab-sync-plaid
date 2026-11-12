@@ -146,9 +146,13 @@ export async function fetchRawWindow(
       if (total >= 0 && plaid.total_transactions !== total) throw new Error("Plaid /transactions/get total_transactions changed during pagination.");
       total = plaid.total_transactions;
       if (page.some((t: any) => !t || typeof t.transaction_id !== "string" || !t.transaction_id ||
-          typeof t.account_id !== "string" || typeof t.date !== "string" ||
+          typeof t.account_id !== "string" || !t.account_id ||
+          typeof t.date !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(t.date) ||
           typeof t.amount !== "number" || !Number.isFinite(t.amount) || typeof t.pending !== "boolean")) {
-        throw new Error("Plaid /transactions/get returned a malformed transaction.");
+        throw new Error("Plaid /transactions/get returned a malformed transaction");
+      }
+      if (page.some((t: any) => t.account_id !== acct.plaid_account_id)) {
+        throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
       }
       if (page.length === 0 && offset < total) throw new Error("Plaid /transactions/get returned an empty page before total_transactions was reached.");
       if (page.length > pageSize || offset + page.length > total) throw new Error("Plaid /transactions/get returned an invalid page size or offset.");
