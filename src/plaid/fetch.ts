@@ -48,7 +48,6 @@ export async function debugPlaidRawTransactions(env: Env, url: URL): Promise<any
       ok: false,
       account: acct.nickname,
       plaid_account_id: acct.plaid_account_id,
-      plaid_access_token_preview: (acct.plaid_access_token || "").substring(0, 20) + "...",
       error: e?.message || String(e)
     };
   }
@@ -125,33 +124,70 @@ export async function fetchRawWindow(
   const pageSize = Math.max(1, Math.min(500, count));
   const MAX_TRANSACTIONS = 1000;
 
-  const collected: any[] = [];
-  let offset = 0;
-  let total = Infinity;
-
-  while (collected.length < total && collected.length < MAX_TRANSACTIONS) {
-    const plaid = await plaidCall(env, "/transactions/get", {
-      access_token: acct.plaid_access_token,
-      start_date,
-      end_date,
-      options: {
-        account_ids: [acct.plaid_account_id],
-        count: pageSize,
-        offset,
-        include_personal_finance_category: true
+  const readPass = async (): Promise<{ rows: any[]; total: number; stable: boolean }> => {
+    const rows: any[] = [];
+    const seenIds = new Set<string>();
+    let offset = 0;
+    let total = -1;
+    let stable = true;
+    while (rows.length < MAX_TRANSACTIONS && (total < 0 || offset < total)) {
+      const plaid = await plaidCall(env, "/transactions/get", {
+        access_token: acct.plaid_access_token,
+        start_date,
+        end_date,
+        options: {
+          account_ids: [acct.plaid_account_id],
+          count: pageSize,
+          offset,
+          include_personal_finance_category: true
+        }
+      });
+      if (!plaid || !Array.isArray(plaid.transactions) ||
+          !Number.isSafeInteger(plaid.total_transactions) || plaid.total_transactions < 0) {
+        throw new Error("Plaid /transactions/get returned an invalid page: transactions and non-negative total_transactions are required");
       }
-    });
+      const page = plaid.transactions;
+      if (total >= 0 && plaid.total_transactions !== total) stable = false;
+      total = plaid.total_transactions;
+      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" ||
+          typeof t.account_id !== "string" || typeof t.date !== "string" ||
+          typeof t.amount !== "number" || !Number.isFinite(t.amount))) stable = false;
+      if (page.length === 0 && offset < total) { stable = false; break; }
+      if (page.length > pageSize || offset + page.length > total) { stable = false; break; }
+      for (const transaction of page) {
+        if (seenIds.has(transaction.transaction_id)) stable = false;
+        seenIds.add(transaction.transaction_id);
+      }
+      rows.push(...page);
+      offset += page.length;
+      if (page.length === 0) break;
+      if (offset < total && page.length !== pageSize) { stable = false; break; }
+    }
+    if (total < 0 || rows.length !== Math.min(total, MAX_TRANSACTIONS)) stable = false;
+    return { rows, total: Math.max(0, total), stable };
+  };
 
-    const page = plaid.transactions || [];
-    collected.push(...page);
-    total = Number.isFinite(plaid.total_transactions) ? plaid.total_transactions : collected.length;
-    offset += page.length;
-    if (page.length === 0) break;
+  // Plaid offset pagination has no snapshot token. For a multi-page result, take
+  // a second complete pass and compare transaction identity and lifecycle fields.
+  // If the underlying window shifted, callers see truncated=true and must not use
+  // it to retire pending YNAB rows.
+  const first = await readPass();
+  let stable = first.stable;
+  if (first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
+    const second = await readPass();
+    const signature = (rows: any[]) => rows.map(t => [
+      t.transaction_id, t.pending_transaction_id || "", t.account_id, t.date,
+      t.authorized_date || "", Number(t.amount), !!t.pending, t.name || "",
+      t.merchant_name || "", t.personal_finance_category?.primary || "",
+      t.personal_finance_category?.detailed || ""
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    stable = stable && second.stable && first.total === second.total &&
+      JSON.stringify(signature(first.rows)) === JSON.stringify(signature(second.rows));
   }
-
+  const truncated = !stable || first.rows.length < first.total || first.total > MAX_TRANSACTIONS;
   return {
-    transactions: collected.map(normalizePlaidTxn),
-    truncated: Number.isFinite(total) && collected.length < total,
+    transactions: first.rows.map(normalizePlaidTxn),
+    truncated,
     start_date,
     end_date
   };

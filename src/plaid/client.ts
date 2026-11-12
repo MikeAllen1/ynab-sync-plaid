@@ -1,7 +1,18 @@
 import { Env } from "../types";
 import { fetchWithRetry, readJsonBody } from "../util/http";
 
+const PLAID_READ_ONLY_POST_PATHS = new Set([
+  "/transactions/sync",
+  "/transactions/get",
+  "/accounts/get",
+  "/item/get",
+  "/webhook_verification_key/get"
+]);
+
 export async function plaidCall(env: Env, path: string, body: any): Promise<any> {
+  // Plaid uses POST for both reads and actions. Only known read-only endpoints may
+  // be replayed; /transactions/refresh and webhook/configuration mutations must not.
+  const retrySafe = PLAID_READ_ONLY_POST_PATHS.has(path);
   const resp = await fetchWithRetry(`https://${env.PLAID_ENV}.plaid.com${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -10,7 +21,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
       secret: env.PLAID_SECRET,
       ...body
     })
-  });
+  }, 2, retrySafe);
 
   const data: any = await readJsonBody(resp);
 
