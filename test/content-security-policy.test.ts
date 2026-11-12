@@ -16,10 +16,10 @@ for (const path of ["/dashboard", "/setup"]) {
     assert.equal(policy.includes("'unsafe-inline'"), false);
 
     const html = await response.text();
-    const scripts = [...html.matchAll(/<script\\b([^>]*)>/gi)];
+    const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)];
     assert.ok(scripts.length > 0);
-    for (const script of scripts) assert.match(script[1], /\\bnonce="/i);
-    assert.doesNotMatch(html, /<[^>]+\\son(?:click|change|input|submit)\\s*=/i);
-    assert.doesNotMatch(html, /<[^>]+\\sstyle\\s*=/i);
+    for (const script of scripts) assert.match(script[1], /\bnonce="/i);
+    assert.doesNotMatch(html, /<[^>]+\son(?:click|change|input|submit)\s*=/i);
+    assert.doesNotMatch(html, /<[^>]+\sstyle\s*=/i);
   });
 }
