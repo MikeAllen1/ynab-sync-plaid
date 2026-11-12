@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { workerEntry } from "../src/index";
 import { createAdminSessionValue } from "../src/util/http";
 import type { Env } from "../src/types";
+import { makeTestSyncLock } from "./session-fixtures";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-const env = { ADMIN_TOKEN: "admin-test-token" } as Env;
+const env = { ADMIN_TOKEN: "admin-test-token", SYNC_LOCK: makeTestSyncLock() } as Env;
 
 test("state-changing routes cannot be invoked with GET", async () => {
-  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue("admin-test-token"))}`;
+  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue(env))}`;
   const paths = [
     "/audit/accounts",
     "/sync",
