@@ -49,7 +49,7 @@ import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
 import { friendlyErrorMessage } from "./util/errors";
 import { ADMIN_SESSION_COOKIE, NO_FRAMING, constantTimeEqual, createAdminSessionValue, fetchWithRetry, json, readJsonBody, requireAdmin } from "./util/http";
-import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts } from "./ynab/client";
+import { ynabGetAccount, ynabGetAccountTransactions, ynabGetAccounts, ynabGetDeletedAccountTransactions } from "./ynab/client";
 
 
 // Durable Object classes must be exported from the main module.
@@ -680,13 +680,9 @@ export const workerEntry = {
       const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") || 60)));
       const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
       // A delta request (last_knowledge_of_server) is the only way YNAB returns deleted rows.
-      const resp = await fetchWithRetry(
-        `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts/${acct.ynab_account_id}/transactions?since_date=${since}&last_knowledge_of_server=1`,
-        { method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` } }
-      );
-      const data: any = await readJsonBody(resp);
-      if (!resp.ok) return json({ ok: false, error: `YNAB ${resp.status}`, detail: data }, 502);
-      const all: any[] = data.data?.transactions || [];
+      let all: any[];
+      try { all = await ynabGetDeletedAccountTransactions(env, acct.ynab_account_id, since); }
+      catch (e: any) { return json({ ok: false, error: e?.message || String(e) }, 502); }
       const origin = (r: any) => !r.import_id ? "entered by hand" : String(r.import_id).startsWith("YNAB:") ? "Direct Import" : /^(pcc|pcp|wp|ynab-sync)/i.test(String(r.import_id)) ? "worker" : "other import";
       const view = (r: any) => ({ id: r.id, date: r.date, payee: r.payee_name || "", amount: roundMoney(Number(r.amount || 0) / 1000), cleared: r.cleared, import_id: r.import_id || "", origin: origin(r), is_transfer: !!r.transfer_transaction_id, memo: r.memo || "" });
       const deleted = all.filter(r => r.deleted).map(view).sort((a, b) => (a.date < b.date ? 1 : -1));
