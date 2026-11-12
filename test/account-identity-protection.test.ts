@@ -65,6 +65,7 @@ test("explicit Plaid identity migration retains old cursor state and keeps the Y
   assert.equal(saved[0].ynab_account_id, "ynab-account");
   assert.equal(await env.SYNC_STATE.get("cursor:plaid-old"), "old-cursor");
   assert.equal(await env.SYNC_STATE.get("cursor:plaid-new"), null);
+  assert.equal(await env.SYNC_STATE.get("sync:enabled"), "false");
   const settings = JSON.parse((await env.SYNC_STATE.get("account_automation_settings"))!);
   assert.equal(settings.find((x: any) => x.nickname === "checking").sync_enabled, false);
   const history = JSON.parse((await env.SYNC_STATE.get("account_migration:" + result.migration_id))!);
