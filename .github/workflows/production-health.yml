@@ -15,6 +15,10 @@ concurrency:
 jobs:
   health:
     name: Authenticated production health check
+    # Opt-in: does nothing until the repository variable ENABLE_PRODUCTION_HEALTH_CHECK
+    # is "true" (Settings -> Secrets and variables -> Actions -> Variables). Copies of this
+    # repo, and anyone who hasn't set it up, get no failing runs every 15 minutes.
+    if: ${{ vars.ENABLE_PRODUCTION_HEALTH_CHECK == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
