@@ -19,9 +19,9 @@ This is not a way to move a feed to a different YNAB account. The migration keep
      "confirm_ynab_account_id": "<the existing YNAB account id>"
    }
    ```
-5. The endpoint verifies that the new Plaid account belongs to the pending Item and that the existing YNAB account is still active. It executes under the global writer lock, refuses a new Plaid ID with existing sync state, records a migration receipt, retains all old-ID state, changes the mapping, and turns sync OFF for that nickname.
+5. The endpoint verifies that the new Plaid account belongs to the pending Item and that the existing YNAB account is still active. It executes under the global writer lock, disables global sync and the affected account before changing identity, refuses a new Plaid ID with existing sync state, records a migration receipt, retains all old-ID state, and changes the mapping.
 6. Run a dry run. Inspect the proposed creates, matches, transfers, and balances against the existing YNAB register. The new Plaid cursor bootstraps independently; historical rows should match the existing register rather than be imported again.
-7. Only re-enable that account after the dry run and reconciliation are correct.
+7. Wait at least 60 seconds for KV propagation, then re-enable the affected account and global sync only after the dry run and reconciliation are correct.
 
 ## Safety boundaries
 
