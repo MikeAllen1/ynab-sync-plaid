@@ -631,6 +631,7 @@ export async function auditAccount(
   // come out wrong, so name the rows.
   let clearedDifference: number | null = null;
   let clearedPendingNote: string | null = null;
+  let aheadOfFeedNote: string | null = null;
   const postedButUncleared: Array<{ date: string; payee: string; amount: number }> = [];
   if (workerSyncs && bankPostedBalance != null && ynabClearedTotal != null) {
     // A payment in transit that has already posted on this side (the card shows the
@@ -656,6 +657,19 @@ export async function auditAccount(
       clearedPendingNote = `$${Math.abs(clearedPendingTotal).toFixed(2)} of YNAB's cleared balance is ${clearedPending.length} item(s) you marked cleared that the bank still lists as pending; its posted balance counts them once they post. Expected if you reconcile to the balance in the bank's app, which includes pending.`;
       clearedDifference = roundMoney(clearedDifference - clearedPendingTotal);
     }
+    // Rows you entered or reconciled in YNAB today or yesterday that the bank feed
+    // hasn't delivered yet (your bank's app shows them first). They're in YNAB's cleared
+    // balance but not in the feed's posted balance: expected, not an unexplained gap.
+    const matchedRowIds = new Set<string>([...rowByTx.values()].map((r: any) => r && r.id).filter(Boolean));
+    const yesterday = new Date(Date.parse(`${todayStr}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const aheadOfFeed = existing.filter(r => r.cleared !== "uncleared" && !matchedRowIds.has(r.id) &&
+      !r.import_id && !r.transfer_account_id && r.date >= yesterday &&
+      !/^Reconciliation Balance Adjustment/i.test(r.payee_name || ""));
+    const aheadOfFeedTotal = roundMoney(aheadOfFeed.reduce((s, r) => s + Number(r.amount || 0) / 1000, 0));
+    if (aheadOfFeed.length && Math.abs(aheadOfFeedTotal) > 0.01) {
+      clearedDifference = roundMoney(clearedDifference - aheadOfFeedTotal);
+      aheadOfFeedNote = `$${Math.abs(aheadOfFeedTotal).toFixed(2)} is in YNAB but not in the bank feed yet (${aheadOfFeed.slice(0, 4).map(r => `${r.payee_name || "entry"} ${(Number(r.amount || 0) / 1000).toFixed(2)}`).join(", ")}): entered from your bank's app, which updates before the feed. Expected; it matches up when the feed catches up.`;
+    }
     const clearedLag = Math.abs(clearedDifference) > 0.01 && !postedButUncleared.length ? bankBalanceLag(clearedDifference, raw, todayStr) : null;
     if (clearedLag) {
       warnings.push(`YNAB's cleared balance differs from the bank's posted balance by $${Math.abs(clearedDifference).toFixed(2)}. ${clearedLag}`);
@@ -671,6 +685,7 @@ export async function auditAccount(
   // reconciliation is transparent about what it excluded and why.
   const notes: string[] = [];
   if (clearedPendingNote) notes.push(clearedPendingNote);
+  if (aheadOfFeedNote) notes.push(aheadOfFeedNote);
   if (expectedRows.length > 0) {
     notes.push(`$${Math.abs(frontLoadedDifference).toFixed(2)} of the difference is expected: ${expectedRows.length} front-loaded item(s) covered by skip rules (${expectedRows.map(e => e.payee_name).join(", ")}) that the bank has not posted yet.`);
   }
