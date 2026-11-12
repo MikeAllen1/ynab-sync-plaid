@@ -110,7 +110,7 @@ test("fetchWithRetry retries 429 using Retry-After and returns the successful re
   }
 });
 
-test("fetchWithRetry caps Retry-After and stops after the configured retry count", async () => {
+test("fetchWithRetry defers a Retry-After longer than the bounded Worker retry window", async () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
   const waits: number[] = [];
@@ -127,8 +127,8 @@ test("fetchWithRetry caps Retry-After and stops after the configured retry count
   try {
     const response = await fetchWithRetry("https://provider.test/resource", { method: "GET" }, 2);
     assert.equal(response.status, 503);
-    assert.equal(calls, 3);
-    assert.deepEqual(waits, [10000, 10000]);
+    assert.equal(calls, 1, "a provider Retry-After of 60 seconds is returned to the scheduler, not shortened");
+    assert.deepEqual(waits, []);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.setTimeout = originalSetTimeout;
