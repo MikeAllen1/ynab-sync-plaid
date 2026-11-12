@@ -149,7 +149,9 @@ const env: any = {
 
 const apiLog: any[] = [];
 let dropNextResponseFor: string | null = null;
-let delayMs: Record<string, number> = {};
+// Paths answered slowly (fixed delay), to test what the page does while waiting.
+const SLOW_MS = 800;
+const slowPaths = new Set<string>();
 
 http.createServer(async (nreq, nres) => {
   const chunks: Buffer[] = [];
@@ -163,7 +165,7 @@ http.createServer(async (nreq, nres) => {
     else if (cmd === "reset-log") { apiLog.length = 0; plaidCalls.length = 0; ynabCalls.length = 0; kvWrites.length = 0; }
     else if (cmd === "kv-put") kv.set(url.searchParams.get("k")!, body.toString());
     else if (cmd === "drop-next") dropNextResponseFor = url.searchParams.get("path");
-    else if (cmd === "delay") delayMs[url.searchParams.get("path")!] = Math.min(5000, Math.max(0, Math.floor(Number(url.searchParams.get("ms")) || 0)));
+    else if (cmd === "delay") slowPaths.add(String(url.searchParams.get("path")));
     else if (cmd === "fail-ynab-delete") failNextYnabDelete = Number(url.searchParams.get("n") || 1);
     else if (cmd === "ynab-edit") { const r = ynabRows.find(x => x.id === url.searchParams.get("id")); if (r) Object.assign(r, JSON.parse(body.toString())); out = r; }
     else if (cmd === "plaid-add") { const t = JSON.parse(body.toString()); (plaidTx[t.account_id] ||= []).push(t); }
@@ -174,7 +176,7 @@ http.createServer(async (nreq, nres) => {
   const req = new Request(ORIGIN + (nreq.url || "/"), { method: nreq.method, headers, body: ["GET", "HEAD"].includes(nreq.method || "GET") ? undefined : body });
   const waits: Promise<any>[] = [];
   const started = Date.now();
-  const d = Math.min(5000, delayMs[url.pathname] || 0); if (d > 0) await new Promise(r => setTimeout(r, d));
+  if (slowPaths.has(url.pathname)) await new Promise(r => setTimeout(r, SLOW_MS));
   let resp: Response;
   try { resp = await workerEntry.fetch(req, env, { waitUntil: (p: Promise<any>) => waits.push(p), passThroughOnException() {} } as any); }
   catch (e: any) { console.error(e); resp = new Response("harness: worker threw", { status: 599 }); }

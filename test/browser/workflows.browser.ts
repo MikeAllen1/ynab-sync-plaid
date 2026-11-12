@@ -66,7 +66,7 @@ test("double-clicking Remove on a transfer label removes only that label", async
   await startHarness();
   const page = await dashboard();
   await openTab(page, "rules");
-  await qa("delay", { path: "/transfer-labels", ms: "600" });
+  await qa("delay", { path: "/transfer-labels" });
   await page.locator("#tlabels [data-click='deleteTLabel']").first().dblclick();
   await page.waitForTimeout(2000);
   assert.deepEqual((await kv("transfer_labels")).map((l: any) => l.tail), ["2222", "3333"]);
@@ -144,7 +144,7 @@ test("results for a previous account choice aren't shown under a new one", async
   await api("/sync", "POST");
   const page = await dashboard();
   await openTab(page, "reconcile");
-  await qa("delay", { path: "/reconcile", ms: "1000" });
+  await qa("delay", { path: "/reconcile" });
   await page.selectOption("#accountSelect", "checking");
   await page.click("[data-click='runReconcile']");
   await page.waitForTimeout(150);
