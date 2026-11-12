@@ -332,25 +332,42 @@ export async function maybeSendHealthAlert(env: Env, summary: any, errors: any[]
   // recovered, others still failing) is recorded quietly.
   const failing = [...new Set(errors.map((e: any) => String(e.account || "all")))].sort();
   const stateKey = currentState === "error" ? `error:${failing.join(",")}` : currentState;
-  const prevKey = (await env.SYNC_STATE.get("last_alert_state")) || "ok";
+
+  // Each configured channel (email via Resend, and/or ALERT_WEBHOOK_URL) keeps its own
+  // "last state sent", so both are used when both are set, and a failure on one never
+  // makes the other send twice. Email has always tracked "last_alert_state" when it
+  // was the only channel; it keeps that key in that case so a deploy sends nothing new.
+  const hasEmail = !!(env as any).RESEND_API_KEY && !!(env as any).ALERT_EMAIL_TO;
+  const hasWebhook = !!env.ALERT_WEBHOOK_URL;
+  const emailStateKey = hasWebhook ? "last_alert_state_email" : "last_alert_state";
+
+  if (hasWebhook) await sendChannelAlert(env, "webhook", "last_alert_state", stateKey, currentState, failing, errors, summary, auditForState, auditError);
+  if (hasEmail) await sendChannelAlert(env, "email", emailStateKey, stateKey, currentState, failing, errors, summary, auditForState, auditError);
+  if (!hasEmail && !hasWebhook) await env.SYNC_STATE.put("last_alert_state", stateKey);
+}
+
+async function sendChannelAlert(
+  env: Env, channel: "email" | "webhook", prevKeyName: string, stateKey: string, currentState: string,
+  failing: string[], errors: any[], summary: any, auditForState: any, auditError: any
+): Promise<void> {
+  const prevKey = (await env.SYNC_STATE.get(prevKeyName)) || "ok";
   if (stateKey === prevKey) return;
   const prevState = prevKey.startsWith("error") ? "error" : prevKey;
   const prevFailing = prevKey.startsWith("error:") ? prevKey.slice(6).split(",").filter(Boolean) : [];
   const newlyFailing = failing.filter(a => !prevFailing.includes(a));
   if (currentState === "error" && prevState === "error" && newlyFailing.length === 0) {
-    await env.SYNC_STATE.put("last_alert_state", stateKey);
+    await env.SYNC_STATE.put(prevKeyName, stateKey);
     return;
   }
   const alertErrors = currentState === "error" && prevState === "error" ? errors.filter((e: any) => newlyFailing.includes(String(e.account || "all"))) : errors;
 
-  if (!env.ALERT_WEBHOOK_URL) {
-    // Email only (Resend): syncs failing, and the recovery after that, are emailed.
-    // Warnings stay on the dashboard so the inbox isn't noisy. The state is recorded
-    // only once the email went out (or there was nothing to send), so a failed email
-    // is retried next run.
+  if (channel === "email") {
+    // Syncs failing, and the recovery after that, are emailed. Warnings stay on the
+    // dashboard so the inbox isn't noisy. The state is recorded only once the email
+    // went out (or there was nothing to send), so a failed email is retried next run.
     const apiKey = (env as any).RESEND_API_KEY, to = (env as any).ALERT_EMAIL_TO;
     const emailWorthy = currentState === "error" || prevState === "error";
-    if (!apiKey || !to || !emailWorthy) { await env.SYNC_STATE.put("last_alert_state", stateKey); return; }
+    if (!emailWorthy) { await env.SYNC_STATE.put(prevKeyName, stateKey); return; }
     const first = alertErrors[0] || {};
     const subject = currentState === "error" ? "⚠️ YNAB sync is failing" : "✅ YNAB sync recovered";
     const origin = (env as any).WORKER_ORIGIN || "https://<your-worker>.workers.dev";
@@ -363,7 +380,7 @@ export async function maybeSendHealthAlert(env: Env, summary: any, errors: any[]
         body: JSON.stringify({ from: (env as any).ALERT_EMAIL_FROM || "YNAB Sync <onboarding@resend.dev>", to: [to], subject, text })
       });
       if (!resp.ok) throw new Error(`Resend refused the email (${resp.status})`);
-      await env.SYNC_STATE.put("last_alert_state", stateKey);
+      await env.SYNC_STATE.put(prevKeyName, stateKey);
       const f = await readJson(env, "last_alert_failure", null);
       if (f?.kind === "sync_email") await env.SYNC_STATE.delete("last_alert_failure");
     } catch (e: any) {
@@ -393,7 +410,7 @@ export async function maybeSendHealthAlert(env: Env, summary: any, errors: any[]
   try {
     // Keys cover the common targets: Slack ("text"), Discord ("content"), and a
     // generic "message". Point ALERT_WEBHOOK_URL at whatever you use.
-    const resp = await fetch(env.ALERT_WEBHOOK_URL, {
+    const resp = await fetch(env.ALERT_WEBHOOK_URL!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -406,8 +423,9 @@ export async function maybeSendHealthAlert(env: Env, summary: any, errors: any[]
       })
     });
     if (!resp.ok) throw new Error(`alert webhook answered ${resp.status}`);
-    await env.SYNC_STATE.put("last_alert_state", stateKey);
-    if (await env.SYNC_STATE.get("last_alert_failure")) await env.SYNC_STATE.delete("last_alert_failure");
+    await env.SYNC_STATE.put(prevKeyName, stateKey);
+    const f = await readJson(env, "last_alert_failure", null);
+    if (f?.kind === "webhook") await env.SYNC_STATE.delete("last_alert_failure");
   } catch (e: any) {
     // An alerting failure must never break or fail the sync itself.
     try { await env.SYNC_STATE.put("last_alert_failure", JSON.stringify({ ts: new Date().toISOString(), kind: "webhook", error: String(e?.message || e) })); } catch { /* ignore */ }
