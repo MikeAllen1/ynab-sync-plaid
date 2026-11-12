@@ -227,6 +227,18 @@ export async function checkAdminTokenAttempt(req: Request, env: Env, supplied: s
   return json({ ok: false, error: "unauthorized", note: "Authenticate with the dashboard admin token." }, 401);
 }
 
+/** When the presented session cookie expires (ISO), or null. Read-only; doesn't validate. */
+export function sessionExpiresAt(req: Request): string | null {
+  const cookieValue = (req.headers.get("Cookie") || "").split(";").map(part => part.trim())
+    .find(part => part.startsWith(ADMIN_SESSION_COOKIE + "="))?.slice(ADMIN_SESSION_COOKIE.length + 1);
+  try {
+    const m = /^v\d+\.(\d+)\./.exec(decodeURIComponent(cookieValue || ""));
+    return m ? new Date((Number(m[1]) + ADMIN_SESSION_SECONDS) * 1000).toISOString() : null;
+  } catch { return null; }
+}
+
+export const ADMIN_SESSION_SECONDS = 3600;
+
 export async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
   const headerToken = req.headers.get("x-admin-token");
 
