@@ -22,7 +22,7 @@ import { dashboardHtml } from "../src/ui/dashboard-page";
 import { setupHtml } from "../src/ui/setup-page";
 
 function inlineScripts(html: string): string {
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).join("\n");
+  return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(m => m[1]).join("\n");
 }
 
 test("dashboard and setup page scripts define the escaping helpers they call", async () => {
