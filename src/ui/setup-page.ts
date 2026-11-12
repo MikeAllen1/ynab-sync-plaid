@@ -167,7 +167,7 @@ function addAccount(btn) {
 
 function prettyName(n) { return String(n || "").split("-").map(function (w) { return w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1); }).join(" "); }
 function loadBanks() {
-  get("/debug/account-map").then(function (accts) {
+  get("/accounts/linked").then(function (accts) {
     var wrap = document.getElementById("banks");
     if (!Array.isArray(accts)) { wrap.innerHTML = '<p class="muted">Enter your admin token above.</p>'; return; }
     wrap.innerHTML = "";
