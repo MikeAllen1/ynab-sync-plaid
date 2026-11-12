@@ -166,7 +166,7 @@ export async function fetchRawWindow(
       if (page.length === 0) break;
       if (offset < total && page.length !== pageSize) { stable = false; break; }
     }
-    if (total < 0 || rows.length !== Math.min(total, MAX_TRANSACTIONS)) stable = false;
+    if (total < 0 || (total <= MAX_TRANSACTIONS && rows.length !== total)) stable = false;
     return { rows, total: Math.max(0, total), stable };
   };
 
