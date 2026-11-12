@@ -116,7 +116,7 @@ because Plaid's published Link CSP requires that directive. See
 
 Run the read-only verifier from a trusted local machine. It checks the deployed KV and Durable
 Object bindings, the SQLite-backed SyncLock namespace, required secret *names* (never values),
-production Plaid mode, an active Cloudflare API token, deployed versions, live CSP headers, and a
+production Plaid mode, the 15-minute Cron Trigger, an active Cloudflare API token, deployed versions, live CSP headers, and a
 non-destructive runtime read/transaction probe.
 
 Create a Cloudflare API token scoped to this account with only **Workers Scripts Read** and
