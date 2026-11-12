@@ -1,6 +1,11 @@
 import { runCache } from "../plaid/fetch";
 import { Env, YNABAccountSummary, YNABExistingTransaction, YNABTransaction } from "../types";
 import { fetchWithRetry, readJsonBody } from "../util/http";
+import { reserveYnabRequest } from "../lock/lock";
+
+async function ynabFetchWithRetry(env: Env, url: string, init: RequestInit): Promise<Response> {
+  return fetchWithRetry(url, init, 2, { beforeAttempt: () => reserveYnabRequest(env) });
+}
 
 export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Promise<any> {
   // When a row is a transfer (payee_id set), YNAB rejects a competing payee_name.
@@ -12,7 +17,7 @@ export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Pro
     }
     return t;
   });
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/transactions`,
     {
       method: "POST",
@@ -51,7 +56,7 @@ export async function ynabUpsert(env: Env, transactions: YNABTransaction[]): Pro
 // posted flip. Used by the single-feed credit-card sync to settle a row in place.
 export async function ynabUpdateTransactions(env: Env, updates: any[]): Promise<{ updated: number }> {
   if (updates.length === 0) return { updated: 0 };
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/transactions`,
     {
       method: "PATCH",
@@ -111,7 +116,7 @@ export async function ynabGetAccounts(env: Env): Promise<YNABAccountSummary[]> {
 }
 
 export async function ynabGetAccountsUncached(env: Env): Promise<YNABAccountSummary[]> {
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts`,
     {
       method: "GET",
@@ -130,7 +135,7 @@ export async function ynabGetAccountsUncached(env: Env): Promise<YNABAccountSumm
 }
 
 export async function ynabGetTransaction(env: Env, id: string): Promise<YNABExistingTransaction | null> {
-  const resp = await fetchWithRetry(`https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/transactions/${encodeURIComponent(id)}`, {
+  const resp = await ynabFetchWithRetry(env, `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/transactions/${encodeURIComponent(id)}`, {
     method: "GET", headers: { "Authorization": `Bearer ${env.YNAB_TOKEN}` }
   });
   if (resp.status === 404) return null;
@@ -148,7 +153,7 @@ export async function ynabGetAccountTransactions(env: Env, ynabAccountId: string
   // (pending charges clear within days). Balances for reconciliation come from
   // ynabGetAccount, so nothing that needs full history relies on this list.
   const query = sinceDate ? `?since_date=${encodeURIComponent(sinceDate)}` : "";
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts/${ynabAccountId}/transactions${query}`,
     {
       method: "GET",
@@ -175,7 +180,7 @@ export interface YNABAccountBalances {
 // Fetches the account's authoritative balances (in milliunits) so the audit can
 // compare against Plaid without summing every transaction ever recorded.
 export async function ynabGetAccount(env: Env, ynabAccountId: string): Promise<YNABAccountBalances | null> {
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/accounts/${encodeURIComponent(ynabAccountId)}`,
     {
       method: "GET",
@@ -199,7 +204,7 @@ export async function ynabGetAccount(env: Env, ynabAccountId: string): Promise<Y
 }
 
 export async function ynabDeleteTransaction(env: Env, transactionId: string): Promise<any> {
-  const resp = await fetchWithRetry(
+  const resp = await ynabFetchWithRetry(env,
     `https://api.ynab.com/v1/budgets/${env.YNAB_BUDGET_ID}/transactions/${transactionId}`,
     {
       method: "DELETE",
