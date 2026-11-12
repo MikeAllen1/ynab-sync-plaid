@@ -41,7 +41,7 @@ test("Plaid transaction snapshot paginates all rows with a stable total", async 
   }
 });
 
-test("Plaid snapshot fails closed when the reported total changes between pages", async () => {
+test("Plaid snapshot rejects a changing reported total between pages", async () => {
   const original = globalThis.fetch;
   const pages = [
     response([row("a"), row("b")], 3), response([row("c")], 4), response([], 4),
@@ -50,8 +50,7 @@ test("Plaid snapshot fails closed when the reported total changes between pages"
   let calls = 0;
   globalThis.fetch = (async () => pages[calls++]) as typeof fetch;
   try {
-    const result = await fetchRawWindow(env, account, 30, 2);
-    assert.equal(result.truncated, true);
+    await assert.rejects(fetchRawWindow(env, account, 30, 2), /total_transactions changed/);
   } finally {
     globalThis.fetch = original;
   }
@@ -66,8 +65,7 @@ test("Plaid snapshot rejects repeated transaction IDs across pages", async () =>
   let calls = 0;
   globalThis.fetch = (async () => pages[calls++]) as typeof fetch;
   try {
-    const result = await fetchRawWindow(env, account, 30, 2);
-    assert.equal(result.truncated, true);
+    await assert.rejects(fetchRawWindow(env, account, 30, 2), /repeated a transaction across pages/);
   } finally {
     globalThis.fetch = original;
   }
