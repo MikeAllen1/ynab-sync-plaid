@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { workerEntry } from "../src/index";
 import { createAdminSessionValue } from "../src/util/http";
 import type { Env } from "../src/types";
+import { makeTestSyncLock } from "./session-fixtures";
 
 test("matching configuration writes require the global Durable Object lock", async () => {
   const token = "test-admin-token";
-  const cookie = `__Host-ynab_admin=${encodeURIComponent(await createAdminSessionValue(token))}`;
   const writes: string[] = [];
   const env = {
     ADMIN_TOKEN: token,
+    SYNC_LOCK: makeTestSyncLock({ failAcquire: true }),
     SYNC_STATE: {
       get: async () => null,
       put: async (key: string) => { writes.push("put:" + key); },
