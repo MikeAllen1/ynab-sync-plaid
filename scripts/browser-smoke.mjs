@@ -35,7 +35,7 @@ try {
   });
   page.on("pageerror", error => pageErrors.push(error.message));
 
-  const dashboard = await page.goto(origin + "/dashboard", { waitUntil: "networkidle" });
+  const dashboard = await page.goto(origin + "/dashboard", { waitUntil: "domcontentloaded" });
   assert.equal(dashboard.status(), 200);
   const dashboardCsp = dashboard.headers()["content-security-policy"] || "";
   assert.match(dashboardCsp, /script-src 'nonce-/);
@@ -54,7 +54,7 @@ try {
     contentType: "application/javascript",
     body: "window.Plaid = { create: function () { return { open: function () {} }; } };"
   }));
-  const setup = await page.goto(origin + "/setup", { waitUntil: "networkidle" });
+  const setup = await page.goto(origin + "/setup", { waitUntil: "domcontentloaded" });
   assert.equal(setup.status(), 200);
   const setupCsp = setup.headers()["content-security-policy"] || "";
   assert.match(setupCsp, /script-src 'nonce-/);
