@@ -46,10 +46,8 @@ test("Plaid transaction window stops safely on an empty page even when provider 
     return Response.json({ transactions: [], total_transactions: 100 });
   };
   try {
-    const result = await fetchRawWindow(env, account, 30, 2);
+    await assert.rejects(fetchRawWindow(env, account, 30, 2), /empty page before total_transactions/);
     assert.equal(calls, 1);
-    assert.equal(result.transactions.length, 0);
-    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
