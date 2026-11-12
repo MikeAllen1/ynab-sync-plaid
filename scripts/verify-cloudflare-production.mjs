@@ -64,12 +64,12 @@ try {
   if (tokenStatus.status === "active") pass("Cloudflare verification token is active");
   else fail("Cloudflare verification token is not active");
 
+  const bindings = settings.bindings || [];
   const vars = settings.vars || {};
-  const plaidEnv = Array.isArray(vars) ? vars.find(v => v.name === "PLAID_ENV")?.value : vars.PLAID_ENV;
+  const plaidEnvBinding = bindings.find(b => b.name === "PLAID_ENV" && b.type === "plain_text");
+  const plaidEnv = plaidEnvBinding?.text ?? (Array.isArray(vars) ? vars.find(v => v.name === "PLAID_ENV")?.value : vars.PLAID_ENV);
   if (plaidEnv === "production") pass("Worker PLAID_ENV is production");
   else fail("Worker PLAID_ENV is not set to production");
-
-  const bindings = settings.bindings || [];
   const kv = bindings.find(b => b.name === "SYNC_STATE" && b.type === "kv_namespace");
   if (kv?.namespace_id && kvNamespaces.some(n => n.id === kv.namespace_id)) pass("SYNC_STATE KV binding points to an existing namespace");
   else fail("SYNC_STATE KV binding or namespace is missing");
