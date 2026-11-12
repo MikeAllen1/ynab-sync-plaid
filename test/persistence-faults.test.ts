@@ -71,6 +71,9 @@ test("a posted ownership-map persistence failure is recovered without losing or 
     }
 
     if (url.hostname === "api.ynab.com") {
+      if (url.pathname === "/v1/plans/budget-id/settings") {
+        return Response.json({ data: { settings: { currency_format: { iso_code: "USD" } } } });
+      }
       if (url.pathname.endsWith("/accounts")) {
         return Response.json({ data: { accounts: [{
           id: "ynab-checking", name: "Checking", type: "checking",
