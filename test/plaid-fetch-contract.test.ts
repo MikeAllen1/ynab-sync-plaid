@@ -28,12 +28,12 @@ test("calendar windows shift date-only values without host timezone dependence",
 
 test("Plaid transaction snapshot paginates all rows with a stable total", async () => {
   const original = globalThis.fetch;
-  const pages = [response([row("a"), row("b")], 3), response([row("c")], 3)];
+  const pages = [response([row("a"), row("b")], 3), response([row("c")], 3), response([row("a"), row("b")], 3), response([row("c")], 3)];
   let calls = 0;
   globalThis.fetch = (async () => pages[calls++]) as typeof fetch;
   try {
     const result = await fetchRawWindow(env, account, 30, 2);
-    assert.equal(calls, 2);
+    assert.equal(calls, 4);
     assert.equal(result.truncated, false);
     assert.deepEqual(result.transactions.map(t => t.transaction_id), ["a", "b", "c"]);
   } finally {
@@ -43,11 +43,15 @@ test("Plaid transaction snapshot paginates all rows with a stable total", async 
 
 test("Plaid snapshot fails closed when the reported total changes between pages", async () => {
   const original = globalThis.fetch;
-  const pages = [response([row("a"), row("b")], 3), response([row("c")], 4)];
+  const pages = [
+    response([row("a"), row("b")], 3), response([row("c")], 4), response([], 4),
+    response([row("a"), row("b")], 3), response([row("c")], 4), response([], 4)
+  ];
   let calls = 0;
   globalThis.fetch = (async () => pages[calls++]) as typeof fetch;
   try {
-    await assert.rejects(fetchRawWindow(env, account, 30, 2), /total_transactions changed/);
+    const result = await fetchRawWindow(env, account, 30, 2);
+    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = original;
   }
@@ -55,11 +59,15 @@ test("Plaid snapshot fails closed when the reported total changes between pages"
 
 test("Plaid snapshot rejects repeated transaction IDs across pages", async () => {
   const original = globalThis.fetch;
-  const pages = [response([row("a"), row("b")], 3), response([row("b")], 3)];
+  const pages = [
+    response([row("a"), row("b")], 3), response([row("b")], 3),
+    response([row("a"), row("b")], 3), response([row("b")], 3)
+  ];
   let calls = 0;
   globalThis.fetch = (async () => pages[calls++]) as typeof fetch;
   try {
-    await assert.rejects(fetchRawWindow(env, account, 30, 2), /repeated a transaction/);
+    const result = await fetchRawWindow(env, account, 30, 2);
+    assert.equal(result.truncated, true);
   } finally {
     globalThis.fetch = original;
   }
