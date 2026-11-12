@@ -9,7 +9,8 @@ const env = {
   PLAID_CLIENT_ID: "plaid-client-id",
   PLAID_SECRET: "plaid-secret",
   YNAB_BUDGET_ID: "budget-123",
-  YNAB_TOKEN: "ynab-secret-token"
+  YNAB_TOKEN: "ynab-secret-token",
+  SYNC_LOCK: { idFromName: () => "test", get: () => ({ fetch: async () => Response.json({ reserved: true }) }) }
 } as unknown as Env;
 
 test("Plaid client sends credentials and request fields to the configured environment endpoint", async () => {
