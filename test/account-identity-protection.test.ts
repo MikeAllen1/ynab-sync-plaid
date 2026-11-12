@@ -40,7 +40,7 @@ test("account mapping refuses silent Plaid account ID changes", async () => {
       plaid_account_id: "plaid-new",
       ynab_account_id: "ynab-account"
     }]),
-    /Plaid account ID changed/
+    /cannot change Plaid or YNAB account IDs in place/
   );
 });
 
@@ -52,7 +52,7 @@ test("account mapping refuses silent YNAB destination changes", async () => {
       plaid_account_id: "plaid-old",
       ynab_account_id: "ynab-other"
     }]),
-    /YNAB destination changed/
+    /cannot change Plaid or YNAB account IDs in place/
   );
 });
 
