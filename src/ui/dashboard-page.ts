@@ -279,6 +279,10 @@ export function dashboardHtml(): Response {
 </main>
 
 <script>
+// Browser-side helpers. The server-side escapeHtml/safeCssClass imports don't exist in
+// the page, so the page script needs its own copies (same behavior as src/util/html.ts).
+function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+function safeCssClass(v, allowed) { return typeof v === "string" && allowed.indexOf(v) >= 0 ? v : ""; }
 var state = { accounts: [], audit: {}, status: {}, items: {}, rules: [], aliases: [], tlabels: [], settings: [] };
 
 function $(id) { return document.getElementById(id); }
