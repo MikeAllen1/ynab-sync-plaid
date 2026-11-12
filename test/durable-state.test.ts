@@ -61,3 +61,39 @@ test("without the Durable Object binding, env is unchanged", () => {
   const env = { SYNC_STATE: kv } as unknown as Env;
   assert.equal(withDurableAccountState(env), env);
 });
+
+test("an already-migrated deployment still carries over a newly added prefix (a paused sync stays paused)", async () => {
+  // As deployed before: the original prefixes were migrated under the single old flag,
+  // and the pause switch lived in KV.
+  const lock = makeTestSyncLock({ state_migrated: true, "state:cursor:p1": { value: "cursor-in-do", expires_at: null } });
+  const { kv } = makeKv({ "sync:enabled": "false", "cursor:p1": "stale-kv-cursor" });
+  const env = withDurableAccountState({ SYNC_STATE: kv, SYNC_LOCK: lock } as unknown as Env);
+  const { isSyncEnabled } = await import("../src/lock/lock");
+  assert.equal(await isSyncEnabled(env), false, "the pause survives the move to the Durable Object");
+  assert.equal(await env.SYNC_STATE.get("cursor:p1"), "cursor-in-do", "already-migrated prefixes are not re-imported from stale KV");
+});
+
+test("Pause is read from the Durable Object, so a location still holding the old KV value sees it", async () => {
+  const lock = makeTestSyncLock();
+  const here = makeKv({ "sync:enabled": "true" });
+  const elsewhere = makeKv({ "sync:enabled": "true" });   // KV copy another location hasn't refreshed yet
+  const envHere = withDurableAccountState({ SYNC_STATE: here.kv, SYNC_LOCK: lock } as unknown as Env);
+  const envThere = withDurableAccountState({ SYNC_STATE: elsewhere.kv, SYNC_LOCK: lock } as unknown as Env);
+  const { isSyncEnabled } = await import("../src/lock/lock");
+  assert.equal(await isSyncEnabled(envThere), true);
+  await envHere.SYNC_STATE.put("sync:enabled", "false");        // what /pause does
+  assert.equal(await isSyncEnabled(envThere), false);
+  assert.equal(elsewhere.values.get("sync:enabled"), "true", "the stale KV copy is no longer consulted");
+});
+
+test("a late import for a prefix that has since been migrated is refused", async () => {
+  const lock = makeTestSyncLock();
+  const stub = lock.get(lock.idFromName("global"));
+  const post = (path: string, body: unknown) => stub.fetch(`https://sync-lock${path}`, { method: "POST", body: JSON.stringify(body) }).then(r => r.json() as Promise<any>);
+  await post("/state/import", { entries: [["sync:enabled", "false"]], mark_migrated: true, prefixes: ["sync:enabled"] });
+  await post("/state/put", { key: "sync:enabled", value: "true" });           // resumed since
+  const late = await post("/state/import", { entries: [["sync:enabled", "false"]], mark_migrated: true, prefixes: ["sync:enabled"] });
+  assert.equal(late.already_migrated, true);
+  const got = await stub.fetch("https://sync-lock/state/get?key=sync:enabled").then(r => r.json() as Promise<any>);
+  assert.equal(got.value, "true");
+});
