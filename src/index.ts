@@ -36,7 +36,7 @@ import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshB
 import { DEFAULT_PAYEE_ALIASES, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
-import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, putAccountAutomationSettings, putAccounts, saveAccountsMerged, settingForAccount } from "./store/accounts";
+import { CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, saveAccountConfiguration, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
