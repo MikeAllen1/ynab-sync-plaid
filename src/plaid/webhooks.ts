@@ -148,7 +148,17 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: ExecutionContext): Promise<any> {
+// The replay receipt is keyed on the signed delivery (the Plaid-Verification JWT,
+// which commits to its issue time and the body hash), not on the body alone. Plaid's
+// webhook bodies carry no timestamp or nonce: two genuine SYNC_UPDATES_AVAILABLE for
+// the same Item minutes apart are byte-identical, and a body-keyed receipt silently
+// dropped the second. An exact replay of a captured delivery is still refused, and
+// back-to-back genuine deliveries are coalesced by the lock and WEBHOOK_MIN_GAP_MINUTES.
+export async function webhookReceiptMaterial(rawBody: string, verificationHeader: string | null): Promise<string> {
+  return verificationHeader ? `jwt:${verificationHeader}` : `body:${rawBody}`;
+}
+
+export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: ExecutionContext, verificationHeader: string | null = null): Promise<any> {
   let body: any = {};
   try {
     body = JSON.parse(rawBody);
@@ -166,8 +176,15 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
 
   // Claim the exact signed payload atomically so Plaid retries cannot launch
   // duplicate syncs or duplicate item-health actions.
-  const receipt = await claimWebhookReceipt(env, rawBody);
-  if (!receipt.claimed) return { ok: true, action: "duplicate_ignored", duplicate: true, event };
+  const receipt = await claimWebhookReceipt(env, await webhookReceiptMaterial(rawBody, verificationHeader));
+  if (!receipt.claimed) {
+    // Even a true duplicate leaves the Item due, so a delivery that raced a sync in
+    // progress is never the reason new data waits a full interval.
+    if (body.webhook_type === "TRANSACTIONS" && body.item_id) {
+      try { await markItemDue(env, String(body.item_id)); } catch { /* cron recovers */ }
+    }
+    return { ok: true, action: "duplicate_ignored", duplicate: true, event };
+  }
   try {
     await appendWebhookHistory(env, event);
   } catch (error) {

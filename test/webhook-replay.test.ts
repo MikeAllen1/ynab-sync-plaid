@@ -66,3 +66,13 @@ test("Durable Object releases a webhook receipt after downstream persistence fai
   const retry = await claim().then(r => r.json() as Promise<any>);
   assert.equal(retry.claimed, true);
 });
+
+test("identical webhook bodies from separate signed deliveries get separate receipts", async () => {
+  const { webhookReceiptMaterial, sha256Hex } = await import("../src/plaid/webhooks");
+  const body = JSON.stringify({ webhook_type: "TRANSACTIONS", webhook_code: "SYNC_UPDATES_AVAILABLE", item_id: "item-1" });
+  const first = await sha256Hex(await webhookReceiptMaterial(body, "h.payload-at-1000.sig1"));
+  const second = await sha256Hex(await webhookReceiptMaterial(body, "h.payload-at-1240.sig2"));
+  const replay = await sha256Hex(await webhookReceiptMaterial(body, "h.payload-at-1000.sig1"));
+  assert.notEqual(first, second, "a second genuine delivery must not be mistaken for a duplicate");
+  assert.equal(first, replay, "an exact replay of one delivery is still a duplicate");
+});

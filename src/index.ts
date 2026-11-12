@@ -197,7 +197,7 @@ export const workerEntry = {
         return json({ ok: false, error: "webhook verification failed" }, 401);
       }
 
-      const result = await handlePlaidWebhook(rawBody, env, ctx);
+      const result = await handlePlaidWebhook(rawBody, env, ctx, verification);
       return json(result);
     }
 
