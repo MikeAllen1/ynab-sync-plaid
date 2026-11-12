@@ -114,6 +114,39 @@ export function normalizePlaidTxn(t: any): PlaidTransaction {
   };
 }
 
+// A Plaid row the worker can't safely represent (no ISO currency, more precision
+// than YNAB's milliunits, missing identity fields). It is set aside and reported
+// instead of failing the whole account: one bad row must never stop every other
+// charge on the account from syncing, or pin its bank cursor.
+export interface QuarantinedPlaidTxn {
+  transaction_id: string;
+  account_id: string;
+  date: string;
+  amount: number | null;
+  name: string;
+  reason: string;
+}
+
+export function partitionPlaidTxns(rows: any[]): { transactions: PlaidTransaction[]; quarantined: QuarantinedPlaidTxn[] } {
+  const transactions: PlaidTransaction[] = [];
+  const quarantined: QuarantinedPlaidTxn[] = [];
+  for (const raw of rows || []) {
+    try {
+      transactions.push(normalizePlaidTxn(raw));
+    } catch (e: any) {
+      quarantined.push({
+        transaction_id: typeof raw?.transaction_id === "string" ? raw.transaction_id : "",
+        account_id: typeof raw?.account_id === "string" ? raw.account_id : "",
+        date: typeof raw?.date === "string" ? raw.date : "",
+        amount: typeof raw?.amount === "number" && Number.isFinite(raw.amount) ? raw.amount : null,
+        name: typeof raw?.merchant_name === "string" && raw.merchant_name ? raw.merchant_name : typeof raw?.name === "string" ? raw.name : "",
+        reason: String(e?.message || e)
+      });
+    }
+  }
+  return { transactions, quarantined };
+}
+
 export interface YNABTransaction {
   account_id: string;
   date: string;
