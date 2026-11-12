@@ -3,6 +3,7 @@ import { plaidCall } from "./client";
 import { getAccounts } from "../store/accounts";
 import { VERIFY_WINDOW_DAYS } from "../sync/engine";
 import { AccountConfig, Env, PlaidTransaction, normalizePlaidTxn } from "../types";
+import { todayInTimeZone } from "../util/dates";
 
 // ---------- Debug endpoints ----------
 
@@ -22,12 +23,8 @@ export async function debugPlaidRawTransactions(env: Env, url: URL): Promise<any
     };
   }
 
-  const end = new Date();
-  const start = new Date();
-  start.setUTCDate(end.getUTCDate() - days);
-
-  const start_date = toIsoDate(start);
-  const end_date = toIsoDate(end);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -days);
 
   let plaid: any;
 
@@ -107,33 +104,26 @@ export async function getRecentRawTransactionsDetailed(
     cached = { days: fetchDays, result: await fetchRawWindow(env, acct, fetchDays, Math.max(count, 500)) };
     runCache.set(key, cached);
   }
-  const start = new Date(); start.setUTCDate(start.getUTCDate() - want);
-  const start_date = toIsoDate(start);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -want);
   return { ...cached.result, start_date, transactions: cached.result.transactions.filter((t: PlaidTransaction) => t.date >= start_date) };
 }
 
 export async function fetchRawWindow(
   env: Env, acct: AccountConfig, days: number, count: number
 ): Promise<{ transactions: PlaidTransaction[]; truncated: boolean; start_date: string; end_date: string }> {
-  const end = new Date();
-  const start = new Date();
-  start.setUTCDate(end.getUTCDate() - Math.max(1, Math.min(100, days)));
-
-  const start_date = toIsoDate(start);
-  const end_date = toIsoDate(end);
+  const end_date = todayInTimeZone(env);
+  const start_date = shiftCalendarDate(end_date, -Math.max(1, Math.min(100, days)));
   const pageSize = Math.max(1, Math.min(500, count));
   const MAX_TRANSACTIONS = 1000;
 
-  type Snapshot = { rows: PlaidTransaction[]; total: number; pages: number; truncated: boolean };
-  const readSnapshot = async (): Promise<Snapshot> => {
+  const readPass = async (): Promise<{ rows: any[]; total: number; stable: boolean }> => {
     const rows: any[] = [];
-    const ids = new Set<string>();
+    const seenIds = new Set<string>();
     let offset = 0;
-    let total: number | null = null;
-    let pages = 0;
-    let unstable = false;
-
-    while ((total === null || offset < total) && rows.length < MAX_TRANSACTIONS) {
+    let total = -1;
+    let stable = true;
+    while (rows.length < MAX_TRANSACTIONS && (total < 0 || offset < total)) {
       const plaid = await plaidCall(env, "/transactions/get", {
         access_token: acct.plaid_access_token,
         start_date,
@@ -145,62 +135,61 @@ export async function fetchRawWindow(
           include_personal_finance_category: true
         }
       });
-
-      if (!plaid || !Array.isArray(plaid.transactions)) {
-        throw new Error("Plaid returned an invalid page: transactions collection is missing");
+      if (!plaid || !Array.isArray(plaid.transactions) ||
+          !Number.isSafeInteger(plaid.total_transactions) || plaid.total_transactions < 0) {
+        throw new Error("Plaid /transactions/get returned an invalid page: transactions and non-negative total_transactions are required");
       }
-      if (!Number.isSafeInteger(plaid.total_transactions) || plaid.total_transactions < 0) {
-        throw new Error("Plaid returned an invalid page: total_transactions is invalid");
-      }
-      if (total === null) total = plaid.total_transactions;
-      else if (total !== plaid.total_transactions) unstable = true;
-
       const page = plaid.transactions;
-      pages++;
-      if (page.length === 0) {
-        if (offset < (total ?? 0)) unstable = true;
-        break;
+      if (page.some((t: any) => t?.account_id !== acct.plaid_account_id)) {
+        throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
       }
-      for (const row of page) {
-        if (!row || typeof row.transaction_id !== "string" || !row.transaction_id ||
-            typeof row.account_id !== "string" || !row.account_id ||
-            typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date) ||
-            typeof row.amount !== "number" || !Number.isFinite(row.amount)) {
-          throw new Error("Plaid returned a malformed transaction row");
-        }
-        if (ids.has(row.transaction_id)) unstable = true;
-        ids.add(row.transaction_id);
-        rows.push(row);
+      if (total >= 0 && plaid.total_transactions !== total) throw new Error("Plaid /transactions/get total_transactions changed during pagination.");
+      total = plaid.total_transactions;
+      if (page.some((t: any) => !t || typeof t.transaction_id !== "string" || !t.transaction_id ||
+          typeof t.account_id !== "string" || !t.account_id ||
+          typeof t.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) ||
+          typeof t.amount !== "number" || !Number.isFinite(t.amount) || typeof t.pending !== "boolean")) {
+        throw new Error("Plaid /transactions/get returned a malformed transaction");
       }
+      if (page.some((t: any) => t.account_id !== acct.plaid_account_id)) {
+        throw new Error("Plaid /transactions/get returned a transaction for an unexpected account.");
+      }
+      if (page.length === 0 && offset < total) throw new Error("Plaid /transactions/get returned an empty page before total_transactions was reached.");
+      if (page.length > pageSize || offset + page.length > total) throw new Error("Plaid /transactions/get returned an invalid page size or offset.");
+      for (const transaction of page) {
+        if (seenIds.has(transaction.transaction_id)) throw new Error("Plaid /transactions/get repeated a transaction across pages.");
+        seenIds.add(transaction.transaction_id);
+      }
+      rows.push(...page);
       offset += page.length;
-      if (offset > (total ?? 0)) unstable = true;
+      if (page.length === 0) break;
+      if (offset < total && page.length !== pageSize) throw new Error("Plaid /transactions/get returned a short page before total_transactions was reached.");
     }
-
-    const reportedTotal = total ?? 0;
-    if (rows.length < reportedTotal || rows.length >= MAX_TRANSACTIONS && rows.length < reportedTotal) unstable = true;
-    return {
-      rows: rows.map(normalizePlaidTxn),
-      total: reportedTotal,
-      pages,
-      truncated: unstable || rows.length < reportedTotal
-    };
+    if (total < 0 || (total <= MAX_TRANSACTIONS && rows.length !== total)) stable = false;
+    return { rows, total: Math.max(0, total), stable };
   };
 
-  const first = await readSnapshot();
-  // A single-page response cannot drift between offsets. For multi-page results,
-  // read a second independent snapshot before trusting the set for lifecycle
-  // decisions such as retiring pending rows.
-  if (first.pages <= 1 || first.truncated) {
-    return { transactions: first.rows, truncated: first.truncated, start_date, end_date };
+  // Plaid offset pagination has no snapshot token. For a multi-page result, take
+  // a second complete pass and compare transaction identity and lifecycle fields.
+  // If the underlying window shifted, callers see truncated=true and must not use
+  // it to retire pending YNAB rows.
+  const first = await readPass();
+  let stable = first.stable;
+  if (first.total > pageSize && first.total <= MAX_TRANSACTIONS) {
+    const second = await readPass();
+    const signature = (rows: any[]) => rows.map(t => [
+      t.transaction_id, t.pending_transaction_id || "", t.account_id, t.date,
+      t.authorized_date || "", Number(t.amount), !!t.pending, t.name || "",
+      t.merchant_name || "", t.personal_finance_category?.primary || "",
+      t.personal_finance_category?.detailed || ""
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    stable = stable && second.stable && first.total === second.total &&
+      JSON.stringify(signature(first.rows)) === JSON.stringify(signature(second.rows));
   }
-
-  const second = await readSnapshot();
-  const sameRows = first.rows.length === second.rows.length &&
-    first.rows.every((row, index) => JSON.stringify(row) === JSON.stringify(second.rows[index]));
-  const stable = first.total === second.total && !second.truncated && sameRows;
+  const truncated = !stable || first.rows.length < first.total || first.total > MAX_TRANSACTIONS;
   return {
-    transactions: first.rows,
-    truncated: !stable,
+    transactions: first.rows.map(normalizePlaidTxn),
+    truncated,
     start_date,
     end_date
   };
@@ -211,8 +200,13 @@ export function toIsoDate(d: Date): string {
 }
 
 export function lookbackDate(env: Env): string {
-  void env; // reserved for a future per-env configurable window
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - YNAB_LOOKBACK_DAYS);
-  return toIsoDate(d);
+  return shiftCalendarDate(todayInTimeZone(env), -YNAB_LOOKBACK_DAYS);
+}
+
+
+// Shift an ISO calendar date without applying the host runtime's timezone.
+export function shiftCalendarDate(date: string, days: number): string {
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(timestamp) || !Number.isInteger(days)) throw new Error("Invalid calendar date shift.");
+  return new Date(timestamp + days * 86400000).toISOString().slice(0, 10);
 }
