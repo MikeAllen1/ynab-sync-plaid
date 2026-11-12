@@ -21,7 +21,7 @@ export async function plaidCall(env: Env, path: string, body: any): Promise<any>
       secret: env.PLAID_SECRET,
       ...body
     })
-  }, 2, true); // Plaid POST endpoints are read/sync operations, not financial mutations.
+  }, 2, retrySafe);
 
   const data: any = await readJsonBody(resp);
 
