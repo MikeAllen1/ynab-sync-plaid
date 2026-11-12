@@ -80,3 +80,25 @@ test("explicit Plaid identity migration refuses a new ID with existing sync stat
   );
   assert.equal(JSON.parse((await env.SYNC_STATE.get("account_map"))!)[0].plaid_account_id, "plaid-old");
 });
+
+test("account mapping cannot bypass migration protection by changing the nickname", async () => {
+  await assert.rejects(
+    saveAccountsMerged(envWithAccount(), [{
+      nickname: "new-checking",
+      plaid_access_token: "new-token",
+      plaid_account_id: "plaid-new",
+      ynab_account_id: "ynab-account"
+    }]),
+    /being reassigned under a different nickname/
+  );
+});
+
+test("two Plaid accounts cannot be routed into the same YNAB destination", async () => {
+  await assert.rejects(
+    saveAccountsMerged(envWithAccount(), [
+      { nickname: "checking", plaid_access_token: "old-token", plaid_account_id: "plaid-old", ynab_account_id: "ynab-account" },
+      { nickname: "checking-duplicate", plaid_access_token: "new-token", plaid_account_id: "plaid-new", ynab_account_id: "ynab-account" }
+    ]),
+    /mapped more than once/
+  );
+});
