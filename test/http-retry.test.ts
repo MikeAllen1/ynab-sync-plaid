@@ -164,3 +164,18 @@ test("Retry-After accepts HTTP dates without shortening provider delays", () => 
   assert.equal(retryAfterDelayMs("Thu, 01 Jan 2026 00:00:03 GMT", 0, now), 3000);
   assert.equal(retryAfterDelayMs("120", 0, now), 120000);
 });
+
+test("every outbound call is bounded by a timeout unless the caller brings its own signal", async () => {
+  const originalFetch = globalThis.fetch;
+  const seen: any[] = [];
+  globalThis.fetch = (async (_u: any, init: any) => { seen.push(init?.signal); return Response.json({ ok: true }); }) as any;
+  try {
+    await fetchWithRetry("https://example.test/read", { method: "GET" });
+    await fetchWithRetry("https://example.test/write", { method: "POST" });
+    const own = new AbortController().signal;
+    await fetchWithRetry("https://example.test/read", { method: "GET", signal: own });
+    assert.ok(seen[0] instanceof AbortSignal);
+    assert.ok(seen[1] instanceof AbortSignal);
+    assert.equal(seen[2], own);
+  } finally { globalThis.fetch = originalFetch; }
+});
