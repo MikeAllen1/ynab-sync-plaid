@@ -3,13 +3,15 @@ import assert from "node:assert/strict";
 import { plaidCall } from "../src/plaid/client";
 import { ynabUpsert } from "../src/ynab/client";
 import type { Env } from "../src/types";
+import { makeTestSyncLock } from "./durable-object-fixture";
 
 const env = {
   PLAID_ENV: "production",
   PLAID_CLIENT_ID: "plaid-client-id",
   PLAID_SECRET: "plaid-secret",
   YNAB_BUDGET_ID: "budget-123",
-  YNAB_TOKEN: "ynab-secret-token"
+  YNAB_TOKEN: "ynab-secret-token",
+  SYNC_LOCK: makeTestSyncLock()
 } as unknown as Env;
 
 test("Plaid client sends credentials and request fields to the configured environment endpoint", async () => {
