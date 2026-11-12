@@ -28,6 +28,7 @@ export function defaultSettingForAccount(nickname: string): AccountAutomationSet
 // link flow) writes KV and takes effect immediately — no deploy.
 
 export const ACCOUNT_MAP_KV_KEY = "account_map";
+export const ACCOUNT_CONFIG_BUNDLE_KEY = "account_config_bundle";
 export const CONFIG_UNREADABLE = "CONFIG_UNREADABLE";
 
 function validateAccountMap(value: any, source: string): AccountConfig[] {
@@ -81,6 +82,15 @@ function validateAccountMap(value: any, source: string): AccountConfig[] {
 
 export async function getAccounts(env: Env): Promise<AccountConfig[]> {
   try {
+    const bundleRaw = await env.SYNC_STATE.get(ACCOUNT_CONFIG_BUNDLE_KEY);
+    if (bundleRaw !== null) {
+      let bundle: any;
+      try { bundle = JSON.parse(bundleRaw); } catch { bundle = null; }
+      if (!bundle || !Array.isArray(bundle.accounts)) {
+        throw new Error(`${CONFIG_UNREADABLE}: the combined account configuration is unreadable. Nothing was synced.`);
+      }
+      return validateAccountMap(bundle.accounts, 'combined account configuration');
+    }
     const raw = await env.SYNC_STATE.get(ACCOUNT_MAP_KV_KEY);
     // Once the account list lives in KV it is the only source: the ACCOUNT_MAP
     // env var is a first-run seed and is never silently brought back.
@@ -106,12 +116,22 @@ export async function getAccounts(env: Env): Promise<AccountConfig[]> {
 }
 
 export async function putAccounts(env: Env, accounts: AccountConfig[]): Promise<void> {
+  const bundleRaw = await env.SYNC_STATE.get(ACCOUNT_CONFIG_BUNDLE_KEY);
+  if (bundleRaw !== null) {
+    let bundle: any;
+    try { bundle = JSON.parse(bundleRaw); } catch { throw new Error(`${CONFIG_UNREADABLE}: combined account configuration can't be updated.`); }
+    if (!bundle || !Array.isArray(bundle.accounts) || !Array.isArray(bundle.settings)) {
+      throw new Error(`${CONFIG_UNREADABLE}: combined account configuration can't be updated.`);
+    }
+    await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ ...bundle, accounts }, null, 2));
+    return;
+  }
   await env.SYNC_STATE.put(ACCOUNT_MAP_KV_KEY, JSON.stringify(accounts, null, 2));
 }
 
 // Merge edited accounts into the stored map. A blank token keeps the stored one, so
 // the dashboard never has to send secrets back.
-export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<AccountConfig[]> {
+export async function saveAccountsMerged(env: Env, incoming: any[], persist = true): Promise<AccountConfig[]> {
   if (!Array.isArray(incoming) || incoming.length === 0) throw new Error("accounts must be a non-empty array");
   const nicknames = new Set<string>();
   const plaidIds = new Set<string>();
@@ -139,6 +159,29 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
     const missing = incoming.filter((a: any) => !String(a?.plaid_access_token || "").trim()).map((a: any) => a?.nickname);
     if (missing.length) throw new Error(`${CONFIG_UNREADABLE}: the saved account list can't be read, so it can only be replaced with a complete one. Include the Plaid access token for: ${missing.join(", ")}.`);
   }
+  // A nickname is a display label, not a durable financial identity. Refuse to
+  // silently retarget an existing mapping: its cursor, ownership links, undo log,
+  // and reconciliation history are keyed to the old Plaid/YNAB identities. A
+  // token rotation for the same two account IDs remains allowed.
+  const incomingByPlaidId = new Map(incoming.map((item: any) => [String(item.plaid_account_id || "").trim(), item]));
+  for (const previous of stored) {
+    const sameNickname = incoming.find((item: any) =>
+      String(item.nickname || "").trim().toLowerCase().replace(/\s+/g, "-") === previous.nickname
+    );
+    if (sameNickname &&
+      (String(sameNickname.plaid_account_id || "").trim() !== previous.plaid_account_id ||
+       String(sameNickname.ynab_account_id || "").trim() !== previous.ynab_account_id)) {
+      throw new Error(`Account mapping for '${previous.nickname}' cannot change Plaid or YNAB account IDs in place. Disable sync and use an explicit account migration; existing transaction ownership and cursor state will not be moved automatically.`);
+    }
+    const reused = incomingByPlaidId.get(previous.plaid_account_id) as any;
+    if (reused) {
+      const reusedNickname = String(reused.nickname || "").trim().toLowerCase().replace(/\s+/g, "-");
+      if (reusedNickname !== previous.nickname || String(reused.ynab_account_id || "").trim() !== previous.ynab_account_id) {
+        throw new Error(`Plaid account '${previous.plaid_account_id}' is already associated with '${previous.nickname}' and cannot be silently renamed or moved to another YNAB account.`);
+      }
+    }
+  }
+
   stored.forEach(a => { byNick[a.nickname] = a; });
   const merged: AccountConfig[] = incoming.map((a: any) => {
     const nickname = String(a.nickname).trim().toLowerCase().replace(/\s+/g, "-");
@@ -155,7 +198,7 @@ export async function saveAccountsMerged(env: Env, incoming: any[]): Promise<Acc
       payment_match: a.payment_match !== undefined ? cleanPaymentMatch(a.payment_match) : prev.payment_match
     } as AccountConfig;
   });
-  await putAccounts(env, merged);
+  if (persist) await putAccounts(env, merged);
   return merged;
 }
 
@@ -174,15 +217,29 @@ export async function accountParam(env: Env, url: URL): Promise<string | undefin
   return (await getAccounts(env)).some(a => a.nickname === name) ? name : null;
 }
 
-// Mask a token for display: keep a short non-sensitive prefix only.
+// Mask tokens completely; even a stable prefix is unnecessary diagnostic exposure.
 export function maskToken(t: string | undefined): string {
-  // Never reveal token characters in API responses or dashboard diagnostics.
   return t ? "••••••••" : "";
 }
 
 export async function getAccountAutomationSettings(env: Env): Promise<AccountAutomationSetting[]> {
-  const accounts = await getAccounts(env);
-  const raw = await env.SYNC_STATE.get("account_automation_settings");
+  const bundleRaw = await env.SYNC_STATE.get(ACCOUNT_CONFIG_BUNDLE_KEY);
+  let accounts: AccountConfig[];
+  let raw: string | null;
+  if (bundleRaw !== null) {
+    let bundle: any;
+    try { bundle = JSON.parse(bundleRaw); } catch { bundle = null; }
+    if (!bundle || !Array.isArray(bundle.accounts) || !Array.isArray(bundle.settings)) {
+      throw new Error(`${CONFIG_UNREADABLE}: the combined account configuration can't be read. Nothing was synced.`);
+    }
+    // Read account identity and automation policy from the same KV value so a
+    // concurrent commit cannot mix the previous account list with new settings.
+    accounts = validateAccountMap(bundle.accounts, "combined account configuration");
+    raw = JSON.stringify(bundle.settings);
+  } else {
+    accounts = await getAccounts(env);
+    raw = await env.SYNC_STATE.get("account_automation_settings");
+  }
 
   let saved: any[] = [];
   if (raw) {
@@ -220,8 +277,8 @@ export async function getAccountAutomationSettings(env: Env): Promise<AccountAut
   });
 }
 
-export async function putAccountAutomationSettings(env: Env, settings: any[]): Promise<AccountAutomationSetting[]> {
-  const accounts = await getAccounts(env);
+export async function putAccountAutomationSettings(env: Env, settings: any[], accountOverride?: AccountConfig[], persist = true, applySideEffects = true): Promise<AccountAutomationSetting[]> {
+  const accounts = accountOverride || await getAccounts(env);
 
   // Load the CURRENTLY SAVED settings so a partial save (e.g. the Account config
   // panel sends only sync_frequency_minutes) preserves fields it didn't send.
@@ -230,7 +287,16 @@ export async function putAccountAutomationSettings(env: Env, settings: any[]): P
   // (this was the "an account's sync turned itself back on" bug). Fallback order is now:
   // input value -> existing saved value -> built-in default.
   let saved: AccountAutomationSetting[] = [];
-  const raw = await env.SYNC_STATE.get("account_automation_settings");
+  const bundleRaw = await env.SYNC_STATE.get(ACCOUNT_CONFIG_BUNDLE_KEY);
+  let raw = await env.SYNC_STATE.get("account_automation_settings");
+  if (bundleRaw !== null) {
+    let bundle: any;
+    try { bundle = JSON.parse(bundleRaw); } catch { bundle = null; }
+    if (!bundle || !Array.isArray(bundle.accounts) || !Array.isArray(bundle.settings)) {
+      throw new Error(`${CONFIG_UNREADABLE}: the combined account configuration can't be read. Restore valid configuration before making a partial change.`);
+    }
+    raw = JSON.stringify(bundle.settings);
+  }
   if (raw !== null) {
     let parsed: any;
     try { parsed = JSON.parse(raw); } catch {
@@ -289,12 +355,19 @@ export async function putAccountAutomationSettings(env: Env, settings: any[]): P
     };
   });
 
-  await env.SYNC_STATE.put("account_automation_settings", JSON.stringify(normalized, null, 2));
+  if (persist) {
+    if (bundleRaw !== null) {
+      const bundle = JSON.parse(bundleRaw);
+      await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ ...bundle, settings: normalized }, null, 2));
+    } else {
+      await env.SYNC_STATE.put("account_automation_settings", JSON.stringify(normalized, null, 2));
+    }
+  }
   // Sync turned back ON for an account the worker had set up before: its saved bank
   // position is from when sync was last on, and replaying everything since would
   // re-create charges Direct Import (or you) already put in YNAB. Set it up fresh
   // instead; the next sync bootstraps it and catches up from YNAB's newest import.
-  for (const acct of accounts) {
+  if (applySideEffects && persist) for (const acct of accounts) {
     const prev = saved.find(s => s && s.nickname === acct.nickname) || {} as any;
     const wasOn = prev.sync_enabled !== undefined ? prev.sync_enabled !== false : defaultSettingForAccount(acct.nickname).sync_enabled;
     const nowOn = normalized.find(n => n.nickname === acct.nickname)?.sync_enabled;
@@ -304,6 +377,30 @@ export async function putAccountAutomationSettings(env: Env, settings: any[]): P
     }
   }
   return normalized;
+}
+
+// Save both account identity and automation policy with one KV commit. Readers
+// prefer this single bundle over the legacy split keys, so they can never observe
+// a new account map paired with stale automation settings after a partial write.
+export async function saveAccountConfiguration(env: Env, incomingAccounts: any[], incomingSettings: any[]): Promise<{ accounts: AccountConfig[]; settings: AccountAutomationSetting[] }> {
+  const previousSettings = await getAccountAutomationSettings(env);
+  const accounts = await saveAccountsMerged(env, incomingAccounts, false);
+  const settings = await putAccountAutomationSettings(env, incomingSettings, accounts, false, false);
+
+  // Prepare the existing "fresh bootstrap when sync is re-enabled" behavior
+  // before the commit. If a reset fails, the old configuration remains active;
+  // if the final bundle write fails, an early reset is harmless and repeatable.
+  for (const acct of accounts) {
+    const previous = previousSettings.find(s => s.nickname === acct.nickname);
+    const wasOn = previous ? previous.sync_enabled : defaultSettingForAccount(acct.nickname).sync_enabled;
+    const nowOn = settings.find(s => s.nickname === acct.nickname)?.sync_enabled;
+    if (!wasOn && nowOn && (await env.SYNC_STATE.get(`bootstrapped:${acct.plaid_account_id}`)) === "1") {
+      await env.SYNC_STATE.delete(`bootstrapped:${acct.plaid_account_id}`);
+      await env.SYNC_STATE.delete(`cursor:${acct.plaid_account_id}`);
+    }
+  }
+  await env.SYNC_STATE.put(ACCOUNT_CONFIG_BUNDLE_KEY, JSON.stringify({ version: 1, accounts, settings }, null, 2));
+  return { accounts, settings };
 }
 
 // Two separate switches per account:
