@@ -27,7 +27,8 @@ new_sqlite_classes = ["SyncLock"]
 PLAID_ENV = "production"            # or "sandbox" to try it with Plaid's test banks
 YNAB_BUDGET_ID = "PASTE_YNAB_BUDGET_ID_HERE"
 TIMEZONE = "America/New_York"       # your IANA time zone, for day boundaries
-# PLAID_REFRESH = "off"             # optional: don't ask Plaid to re-check banks (billed per call on paid plans)
+PLAID_REFRESH = "off"             # optional: don't ask Plaid to re-check banks (billed per call on paid plans)
+ENABLE_SENSITIVE_DIAGNOSTICS = "false" # set to "true" only when transaction-level debug output is needed
 # CC_TRANSFER_CUTOFF = "2026-01-01" # optional: card payments before this stay in the card's starting balance
 # WORKER_ORIGIN = "https://ynab-sync.<you>.workers.dev"   # optional: links in alert emails
 
