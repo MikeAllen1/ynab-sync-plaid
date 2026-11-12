@@ -116,7 +116,16 @@ try {
   const setupCsp = setup.headers.get("content-security-policy") || "";
   const setupHtml = await setup.text();
   const setupConnectSrc = setupCsp.split(";").map(part => part.trim()).find(part => part.startsWith("connect-src ")) || "";
-  const productionPlaidOriginAllowed = /(?:^|\s)https:\/\/production\.plaid\.com(?:\s|$)/.test(setupConnectSrc);
+  const productionPlaidOriginAllowed = setupConnectSrc.split(/\s+/).some(source => {
+    try {
+      const origin = new URL(source);
+      return origin.protocol === "https:" && origin.hostname === "production.plaid.com" &&
+        origin.port === "" && origin.username === "" && origin.password === "" &&
+        origin.pathname === "/" && origin.search === "" && origin.hash === "";
+    } catch {
+      return false;
+    }
+  });
   if (setup.status === 200 && setupCsp.includes("script-src 'nonce-") && !setupCsp.includes("script-src-attr 'unsafe-inline'") && productionPlaidOriginAllowed) {
     pass("Live setup page returns nonce scripts and the production Plaid Link allowlist");
   } else fail("Live setup CSP is missing or incompatible with production Plaid Link");
