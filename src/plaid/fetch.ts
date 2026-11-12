@@ -124,33 +124,83 @@ export async function fetchRawWindow(
   const pageSize = Math.max(1, Math.min(500, count));
   const MAX_TRANSACTIONS = 1000;
 
-  const collected: any[] = [];
-  let offset = 0;
-  let total = Infinity;
+  type Snapshot = { rows: PlaidTransaction[]; total: number; pages: number; truncated: boolean };
+  const readSnapshot = async (): Promise<Snapshot> => {
+    const rows: any[] = [];
+    const ids = new Set<string>();
+    let offset = 0;
+    let total: number | null = null;
+    let pages = 0;
+    let unstable = false;
 
-  while (collected.length < total && collected.length < MAX_TRANSACTIONS) {
-    const plaid = await plaidCall(env, "/transactions/get", {
-      access_token: acct.plaid_access_token,
-      start_date,
-      end_date,
-      options: {
-        account_ids: [acct.plaid_account_id],
-        count: pageSize,
-        offset,
-        include_personal_finance_category: true
+    while ((total === null || offset < total) && rows.length < MAX_TRANSACTIONS) {
+      const plaid = await plaidCall(env, "/transactions/get", {
+        access_token: acct.plaid_access_token,
+        start_date,
+        end_date,
+        options: {
+          account_ids: [acct.plaid_account_id],
+          count: pageSize,
+          offset,
+          include_personal_finance_category: true
+        }
+      });
+
+      if (!plaid || !Array.isArray(plaid.transactions)) {
+        throw new Error("Plaid returned an invalid page: transactions collection is missing");
       }
-    });
+      if (!Number.isSafeInteger(plaid.total_transactions) || plaid.total_transactions < 0) {
+        throw new Error("Plaid returned an invalid page: total_transactions is invalid");
+      }
+      if (total === null) total = plaid.total_transactions;
+      else if (total !== plaid.total_transactions) unstable = true;
 
-    const page = plaid.transactions || [];
-    collected.push(...page);
-    total = Number.isFinite(plaid.total_transactions) ? plaid.total_transactions : collected.length;
-    offset += page.length;
-    if (page.length === 0) break;
+      const page = plaid.transactions;
+      pages++;
+      if (page.length === 0) {
+        if (offset < (total ?? 0)) unstable = true;
+        break;
+      }
+      for (const row of page) {
+        if (!row || typeof row.transaction_id !== "string" || !row.transaction_id ||
+            typeof row.account_id !== "string" || !row.account_id ||
+            typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date) ||
+            typeof row.amount !== "number" || !Number.isFinite(row.amount)) {
+          throw new Error("Plaid returned a malformed transaction row");
+        }
+        if (ids.has(row.transaction_id)) unstable = true;
+        ids.add(row.transaction_id);
+        rows.push(row);
+      }
+      offset += page.length;
+      if (offset > (total ?? 0)) unstable = true;
+    }
+
+    const reportedTotal = total ?? 0;
+    if (rows.length < reportedTotal || rows.length >= MAX_TRANSACTIONS && rows.length < reportedTotal) unstable = true;
+    return {
+      rows: rows.map(normalizePlaidTxn),
+      total: reportedTotal,
+      pages,
+      truncated: unstable || rows.length < reportedTotal
+    };
+  };
+
+  const first = await readSnapshot();
+  // A single-page response cannot drift between offsets. For multi-page results,
+  // read a second independent snapshot before trusting the set for lifecycle
+  // decisions such as retiring pending rows.
+  if (first.pages <= 1 || first.truncated) {
+    return { transactions: first.rows, truncated: first.truncated, start_date, end_date };
   }
 
+  const second = await readSnapshot();
+  const sameRows = first.rows.length === second.rows.length &&
+    first.rows.every((row, index) => JSON.stringify(row) === JSON.stringify(second.rows[index]));
+  const stable = first.total === second.total && !second.truncated && sameRows;
   return {
-    transactions: collected.map(normalizePlaidTxn),
-    truncated: Number.isFinite(total) && collected.length < total,
+    transactions: first.rows,
+    truncated: !stable,
     start_date,
     end_date
   };
