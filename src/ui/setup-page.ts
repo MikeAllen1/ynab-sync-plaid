@@ -19,7 +19,8 @@ export function setupHtml(): string {
     h1 { font-size: 24px; margin: 0 0 4px; } h2 { font-size: 18px; margin: 28px 0 6px; }
     .muted { color: var(--muted); font-size: 14px; }
     input, select { width: 100%; padding: 9px 10px; font: inherit; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: var(--text); }
-    .compact-checkbox { width: auto; }\n    .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+    .compact-checkbox { width: auto; }
+    .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
     .row .name { flex: 1; font-weight: 600; }
     .fit-content { width:auto; }
     button { padding: 9px 16px; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: var(--primary); color: #fff; cursor: pointer; }
