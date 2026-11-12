@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { verifyPlaidWebhook } from "../src/plaid/webhooks";
 import type { Env } from "../src/types";
+import { makeTestSyncLock } from "./durable-object-fixture";
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -40,6 +41,7 @@ function envWithKey(jwk: JsonWebKey): Env {
     ["plaid_wh_key:qa-webhook-key", JSON.stringify(jwk)]
   ]);
   return {
+    SYNC_LOCK: makeTestSyncLock(),
     SYNC_STATE: {
       get: async (key: string) => values.get(key) ?? null,
       put: async (key: string, value: string) => { values.set(key, value); },
