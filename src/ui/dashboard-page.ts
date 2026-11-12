@@ -263,6 +263,7 @@ export function dashboardHtml(): Response {
   </section>
 
   <section id="tab-recovery" role="tabpanel" aria-label="recovery" class="panel">
+    <p class="hint">Detailed transaction-level diagnostics (raw Plaid rows, pending traces, stuck-row detail, and the YNAB register dump) are disabled by default. To use them temporarily, set ENABLE_SENSITIVE_DIAGNOSTICS = "true" in wrangler.toml and redeploy; set it back to "false" when finished. Undo, refresh, webhook configuration, and test alerts remain available.</p>
     <div class="block card item">
       <div class="recovery"><div><strong>Undo a sync</strong><p>Deletes rows a sync created. Rows that have since posted or been reconciled are kept. Previews first.</p></div><button class="btn warning" data-action="undo">Undo…</button></div>
       <div class="recovery"><div><strong>Ask Plaid to refresh</strong><p>Makes Plaid re-poll the banks now, if something visible at the bank hasn't arrived.</p></div><button class="btn" data-action="show-path" data-path="/force-refresh">Refresh Plaid</button></div>
