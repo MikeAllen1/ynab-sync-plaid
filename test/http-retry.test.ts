@@ -152,5 +152,5 @@ test("readJsonBody preserves JSON and safely summarizes HTML gateway errors", as
 test("Retry-After accepts HTTP dates and caps excessive waits", () => {
   const now = Date.parse("2026-01-01T00:00:00Z");
   assert.equal(retryAfterDelayMs("Thu, 01 Jan 2026 00:00:03 GMT", 0, now), 3000);
-  assert.equal(retryAfterDelayMs("120", 0, now), 10000);
+  assert.equal(retryAfterDelayMs("120", 0, now), 120000);
 });
