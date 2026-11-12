@@ -19,9 +19,16 @@ const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const workerName = process.env.WORKER_NAME || "ynab-sync";
 const workerUrl = (process.env.WORKER_URL || "").replace(/\/$/, "");
 const adminToken = process.env.ADMIN_TOKEN;
+let parsedWorkerUrl;
+try { parsedWorkerUrl = new URL(workerUrl); } catch {}
 
 if (!accountId || !apiToken || !workerUrl || !adminToken) {
   console.error("Missing required environment: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, WORKER_URL, ADMIN_TOKEN");
+  process.exit(2);
+}
+if (!parsedWorkerUrl || parsedWorkerUrl.protocol !== "https:" || parsedWorkerUrl.pathname !== "/" ||
+    parsedWorkerUrl.search || parsedWorkerUrl.hash || parsedWorkerUrl.username || parsedWorkerUrl.password) {
+  console.error("WORKER_URL must be an HTTPS origin only (no path, query, fragment, or embedded credentials).");
   process.exit(2);
 }
 
@@ -43,6 +50,7 @@ async function cf(path) {
 async function live(path, options = {}) {
   return fetch(workerUrl + path, {
     ...options,
+    redirect: "manual",
     headers: { ...(options.headers || {}), "x-admin-token": adminToken, "Cache-Control": "no-store" }
   });
 }
