@@ -615,6 +615,17 @@ export const workerEntry = {
     }
     // NEW: Account config management (KV-backed). Lets the dashboard read and
     // update accounts without editing wrangler.toml or redeploying.
+    if (url.pathname === "/accounts/linked") {
+      const unauthorized = await requireAdmin(req, env);
+      if (unauthorized) return unauthorized;
+      if (req.method !== "GET") return json({ error: "GET only" }, 405);
+      const accounts = await getAccounts(env);
+      return json(accounts.map(a => ({
+        nickname: a.nickname,
+        institution: a.institution || "",
+        login: a.item_id || a.nickname
+      })));
+    }
     if (url.pathname === "/accounts") {
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
