@@ -5,6 +5,9 @@ export interface Env {
   PLAID_SECRET: string;
   YNAB_TOKEN: string;
   ADMIN_TOKEN: string;
+  // Optional. A separate, read-only credential for uptime monitors: it can read a
+  // minimal /health summary and nothing else. Must differ from ADMIN_TOKEN.
+  HEALTH_TOKEN?: string;
 
   PLAID_ENV: string;
   YNAB_BUDGET_ID: string;

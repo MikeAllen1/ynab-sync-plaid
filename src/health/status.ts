@@ -231,3 +231,14 @@ export async function readJson(env: Env, key: string, fallback: any): Promise<an
     return fallback;
   }
 }
+
+/** The subset of /health an unattended monitor needs, for the read-only HEALTH_TOKEN. */
+export function healthSummaryForMonitor(h: any): any {
+  return {
+    ok: h?.ok === true,
+    health_status: h?.health_status ?? null,
+    sync_enabled: h?.sync_enabled ?? null,
+    lock_mode: h?.lock_mode ?? null,
+    overdue_accounts: Array.isArray(h?.overdue_accounts) ? h.overdue_accounts : null
+  };
+}
