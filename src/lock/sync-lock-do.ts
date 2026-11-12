@@ -122,6 +122,27 @@ export class SyncLock {
       return Response.json({ items: Array.isArray(stored) ? stored : null });
     }
 
+
+    if (url.pathname === "/ynab-rate/reserve" && request.method === "POST") {
+      // YNAB documents a 200-request/hour token limit. Keep this worker below it
+      // so dashboard/manual API use has headroom. This is a rolling window, not a
+      // fixed clock bucket, and the DO transaction makes reservations atomic.
+      const windowMs = 60 * 60 * 1000;
+      const limit = 180;
+      const result = await this.state.storage.transaction(async txn => {
+        const stored = await txn.get<number[]>("ynab-rate:timestamps");
+        const live = (Array.isArray(stored) ? stored : []).filter(ts => Number.isFinite(ts) && now - ts < windowMs);
+        if (live.length >= limit) {
+          await txn.put("ynab-rate:timestamps", live);
+          return { reserved: false, retry_after_ms: Math.max(0, live[0] + windowMs - now) };
+        }
+        live.push(now);
+        await txn.put("ynab-rate:timestamps", live);
+        return { reserved: true, remaining: limit - live.length };
+      });
+      return Response.json(result, { status: result.reserved ? 200 : 429 });
+    }
+
     if (url.pathname === "/acquire" && request.method === "POST") {
       const result = await this.state.storage.transaction(async txn => {
         const held = await txn.get<{ id: string; at: number }>("lock");

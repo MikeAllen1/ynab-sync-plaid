@@ -82,17 +82,33 @@ export interface PlaidTransaction {
 // All category-based logic (classifyTransfer, fuzzyTwin tip tolerance) depends on
 // these flattened fields, so every feed must pass through here.
 export function normalizePlaidTxn(t: any): PlaidTransaction {
+  if (!t || typeof t.transaction_id !== "string" || !t.transaction_id ||
+      typeof t.account_id !== "string" || !t.account_id ||
+      typeof t.amount !== "number" || !Number.isFinite(t.amount) ||
+      typeof t.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) ||
+      typeof t.pending !== "boolean") {
+    throw new Error("Plaid transaction is missing required identity, amount, date, or pending fields.");
+  }
+  // YNAB stores milliunits and the worker does not perform FX conversion. Never
+  // invent USD when Plaid supplies no ISO currency or silently round beyond the
+  // destination's three-decimal precision.
+  if (typeof t.iso_currency_code !== "string" || !/^[A-Z]{3}$/.test(t.iso_currency_code)) {
+    throw new Error(`Plaid transaction ${t.transaction_id} has no supported ISO currency code; it was not imported.`);
+  }
+  if (Math.abs(t.amount * 1000 - Math.round(t.amount * 1000)) > 1e-7) {
+    throw new Error(`Plaid transaction ${t.transaction_id} exceeds YNAB milliunit precision; it was not imported.`);
+  }
   return {
     transaction_id: t.transaction_id,
-    pending_transaction_id: t.pending_transaction_id || null,
+    pending_transaction_id: typeof t.pending_transaction_id === "string" ? t.pending_transaction_id : null,
     account_id: t.account_id,
-    amount: Number(t.amount),
-    iso_currency_code: t.iso_currency_code || "USD",
+    amount: t.amount,
+    iso_currency_code: t.iso_currency_code,
     date: t.date,
-    authorized_date: t.authorized_date || null,
-    name: t.name || "Unknown",
-    merchant_name: t.merchant_name || null,
-    pending: !!t.pending,
+    authorized_date: typeof t.authorized_date === "string" ? t.authorized_date : null,
+    name: typeof t.name === "string" && t.name ? t.name : "Unknown",
+    merchant_name: typeof t.merchant_name === "string" ? t.merchant_name : null,
+    pending: t.pending,
     pfc_primary: t.pfc_primary ?? t.personal_finance_category?.primary ?? null,
     pfc_detailed: t.pfc_detailed ?? t.personal_finance_category?.detailed ?? null
   };

@@ -12,11 +12,16 @@ export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   retries = 2,
-  retrySafe = ["GET", "HEAD", "OPTIONS"].includes(String(init.method || "GET").toUpperCase())
+  options: { retrySafe?: boolean; beforeAttempt?: () => Promise<void> } | boolean = {}
 ): Promise<Response> {
+  const method = String(init.method || "GET").toUpperCase();
+  const safeToRetry = typeof options === "boolean"
+    ? options
+    : options.retrySafe === true || ["GET", "HEAD", "OPTIONS"].includes(method);
   let attempt = 0;
   while (true) {
     await keepLeaseAlive();
+    if (typeof options !== "boolean" && options.beforeAttempt) await options.beforeAttempt();
     let resp: Response;
     try {
       resp = await fetch(url, init);
@@ -25,16 +30,21 @@ export async function fetchWithRetry(
       // have committed it. Never replay writes unless the caller explicitly
       // establishes that the operation is safe to repeat.
       await keepLeaseAlive();
-      if (!retrySafe || attempt >= retries) throw error;
+      if (!safeToRetry || attempt >= retries) throw error;
       await sleep(Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250));
       attempt++;
       continue;
     }
-    // A request may have outlived the lease TTL. Revalidate ownership before the
-    // caller can consume its response or issue a subsequent financial mutation.
+    // Revalidate ownership before the caller can consume the response or issue
+    // a subsequent financial mutation.
     await keepLeaseAlive();
-    if (retrySafe && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
-      await sleep(retryAfterDelayMs(resp.headers.get("Retry-After"), attempt));
+    if (safeToRetry && (resp.status === 429 || resp.status >= 500) && attempt < retries) {
+      const backoffMs = retryAfterDelayMs(resp.headers.get("Retry-After"), attempt);
+      // Do not shorten a provider-specified delay; defer to the next scheduled
+      // execution when it exceeds this Worker request's bounded retry window.
+      if (backoffMs > 10000) return resp;
+      try { await resp.body?.cancel(); } catch { /* retry only if semantics are safe */ }
+      await sleep(backoffMs);
       attempt++;
       continue;
     }
@@ -43,12 +53,13 @@ export async function fetchWithRetry(
 }
 
 export function retryAfterDelayMs(header: string | null, attempt: number, now = Date.now()): number {
-  const seconds = header ? Number(header) : NaN;
-  const dateDelay = header && !Number.isFinite(seconds) ? Date.parse(header) - now : NaN;
-  const requestedDelay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : dateDelay;
-  return Number.isFinite(requestedDelay) && requestedDelay > 0
-    ? Math.min(requestedDelay, 10000)
-    : Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
+  if (header !== null && header.trim() !== "") {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.max(0, date - now);
+  }
+  return Math.min(500 * 2 ** attempt, 4000) + Math.floor(Math.random() * 250);
 }
 
 export function sleep(ms: number): Promise<void> {

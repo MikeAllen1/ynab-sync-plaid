@@ -100,6 +100,9 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     }
 
     if (url.hostname === "api.ynab.com") {
+      if (url.pathname === "/v1/plans/budget-id/settings") {
+        return Response.json({ data: { settings: { currency_format: { iso_code: "USD" } } } });
+      }
       if (url.pathname.endsWith("/accounts")) {
         return Response.json({ data: { accounts: [{
           id: "ynab-checking", name: "Checking", type: "checking",
@@ -173,7 +176,7 @@ test("a lost YNAB create response leaves cursor unchanged and next run recovers 
     resetRunCache();
     await assert.rejects(
       syncAccountEngine(env, account, [], { trigger: "malformed-page", runId: "run-fault-5" }),
-      /Plaid \/transactions\/sync returned an invalid page/
+      /Plaid \/transactions\/sync returned an invalid response/
     );
 
     assert.equal(values.get("cursor:plaid-checking"), "cursor-third", "malformed pagination metadata must never advance the saved cursor");

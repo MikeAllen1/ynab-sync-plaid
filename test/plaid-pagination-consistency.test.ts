@@ -7,7 +7,7 @@ const env = { PLAID_ENV: "production", PLAID_CLIENT_ID: "client", PLAID_SECRET: 
 const account: any = { nickname: "checking", plaid_access_token: "access", plaid_account_id: "account-1" };
 const row = (id: string, amount: number) => ({
   transaction_id: id, pending_transaction_id: null, account_id: "account-1",
-  date: "2026-11-10", amount, name: id, merchant_name: id, pending: false,
+  date: "2026-11-10", amount, iso_currency_code: "USD", name: id, merchant_name: id, pending: false,
   personal_finance_category: { primary: "GENERAL_MERCHANDISE", detailed: "GENERAL_MERCHANDISE_OTHER" }
 });
 
