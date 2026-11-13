@@ -1573,43 +1573,23 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
   const failedDeletes = new Set(deleteErrors.map(e => e.id));
   const anyWrites = updates.length + deletes.length > 0;
   const prevFailed: Record<string, string> = anyWrites ? await readJson(env, failKey, {}) : {};
-  const nowFailed: Record<string, string> = {};
   const failureText = (error: string) => /failed: 4\d\d/.test(error)
     ? `${plainYnabError(error)}. Fix it in YNAB; the rest of the sync continues.`
     : `YNAB was unavailable (${plainYnabError(error)}). The next sync retries it.`;
-  // Values are the first-failure date, with "#released" once the failure stopped
-  // holding the cursor (so that is logged once).
-  const firstFailed = (id: string) => String(prevFailed[id] || today).split("#")[0];
+  const tracked = trackWriteFailures(prevFailed, [...updatedResult.failed, ...deleteErrors], today);
+  const { nowFailed, cursorBlockers } = tracked;
   for (const f of updatedResult.failed) {
-    nowFailed[f.id] = prevFailed[f.id] || today;
-    if (!prevFailed[f.id]) {
-      const u = updates.find(x => x.id === f.id);
-      logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: f.id, amount: u?.amount, detail: `${u?._payee || ""}: ${failureText(f.error)}` });
-    }
+    if (!tracked.firstSeen.has(f.id)) continue;
+    const u = updates.find(x => x.id === f.id);
+    logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: f.id, amount: u?.amount, detail: `${u?._payee || ""}: ${failureText(f.error)}` });
   }
   for (const f of deleteErrors) {
-    nowFailed[f.id] = prevFailed[f.id] || today;
-    if (!prevFailed[f.id]) {
-      const d = deletes.find(x => x.row.id === f.id);
-      logEvent(events, { account: acct.nickname, action: "delete_failed", transaction_id: f.id, amount: d ? Number(d.row.amount || 0) : undefined, detail: `${d?.row.payee_name || ""}: couldn't remove it. ${failureText(String(f.error || ""))}` });
-    }
+    if (!tracked.firstSeen.has(f.id)) continue;
+    const d = deletes.find(x => x.row.id === f.id);
+    logEvent(events, { account: acct.nickname, action: "delete_failed", transaction_id: f.id, amount: d ? Number(d.row.amount || 0) : undefined, detail: `${d?.row.payee_name || ""}: couldn't remove it. ${failureText(String(f.error || ""))}` });
   }
-  // Which failures still hold back the cursor. A permanent refusal (YNAB 4xx) that
-  // has lasted PERMANENT_FAILURE_CURSOR_RELEASE_DAYS no longer does: replaying the
-  // bank delta can't fix it, and holding the cursor made every later run re-read an
-  // ever-growing backlog. The row is still retried each run from the window.
-  const cursorBlockers: string[] = [];
-  for (const f of [...updatedResult.failed, ...deleteErrors]) {
-    const permanent = /failed: 4\d\d/.test(String(f.error || ""));
-    const aged = calendarDaysBetween(firstFailed(f.id), today) >= PERMANENT_FAILURE_CURSOR_RELEASE_DAYS;
-    if (permanent && aged) {
-      if (!String(prevFailed[f.id] || "").includes("#released")) {
-        logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: f.id, detail: `YNAB has refused this change for ${PERMANENT_FAILURE_CURSOR_RELEASE_DAYS}+ days, so it no longer holds up new bank activity. Fix the row in YNAB; the worker keeps retrying it.` });
-      }
-      nowFailed[f.id] = `${firstFailed(f.id)}#released`;
-    } else {
-      cursorBlockers.push(f.id);
-    }
+  for (const id of tracked.releasedNow) {
+    logEvent(events, { account: acct.nickname, action: "update_failed", transaction_id: id, detail: `YNAB has refused this change for ${PERMANENT_FAILURE_CURSOR_RELEASE_DAYS}+ days, so it no longer holds up new bank activity. Fix the row in YNAB; the worker keeps retrying it.` });
   }
   if (anyWrites && JSON.stringify(nowFailed) !== JSON.stringify(prevFailed)) {
     if (Object.keys(nowFailed).length) await env.SYNC_STATE.put(failKey, JSON.stringify(nowFailed));
@@ -1665,6 +1645,44 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     created_ids: createdResult.created_ids || [],
     ynab: { added: createdResult.added || 0, updated: updatedResult.updated, deleted }
   };
+}
+
+/**
+ * Bookkeeping for YNAB updates and removals that didn't go through, kept per account
+ * (KV "update_failed:<plaid account>") as id -> first-failure date, with "#released" once
+ * the failure stopped holding back the bank cursor.
+ *
+ * Every failure holds the cursor (the next run replays the bank delta) except a
+ * permanent refusal (YNAB 4xx) that has lasted PERMANENT_FAILURE_CURSOR_RELEASE_DAYS:
+ * replaying can't fix it, and holding the cursor made every later run re-read an
+ * ever-growing backlog. Such rows are still retried from the window every run.
+ * Pure: the engine logs firstSeen (new failures) and releasedNow (just released) once.
+ */
+export function trackWriteFailures(
+  prevFailed: Record<string, string>,
+  failures: Array<{ id: string; error?: string }>,
+  today: string
+): { nowFailed: Record<string, string>; cursorBlockers: string[]; firstSeen: Set<string>; releasedNow: string[] } {
+  const nowFailed: Record<string, string> = {};
+  const firstSeen = new Set<string>();
+  const releasedNow: string[] = [];
+  const cursorBlockers: string[] = [];
+  const firstFailed = (id: string) => String(prevFailed[id] || today).split("#")[0];
+  for (const f of failures) {
+    nowFailed[f.id] = prevFailed[f.id] || today;
+    if (!prevFailed[f.id]) firstSeen.add(f.id);
+  }
+  for (const f of failures) {
+    const permanent = /failed: 4\d\d/.test(String(f.error || ""));
+    const aged = calendarDaysBetween(firstFailed(f.id), today) >= PERMANENT_FAILURE_CURSOR_RELEASE_DAYS;
+    if (permanent && aged) {
+      if (!String(prevFailed[f.id] || "").includes("#released")) releasedNow.push(f.id);
+      nowFailed[f.id] = `${firstFailed(f.id)}#released`;
+    } else {
+      cursorBlockers.push(f.id);
+    }
+  }
+  return { nowFailed, cursorBlockers, firstSeen, releasedNow };
 }
 
 // How a row was matched, in words, for Activity.

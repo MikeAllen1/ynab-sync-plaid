@@ -42,7 +42,7 @@ import { withDurableAccountState } from "./store/durable-state";
 import { openToken, sealToken } from "./util/token-crypto";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
-import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
+import { WORKER_PENDING_PREFIX, rowOrigin, shortStableHash, workerPostedImportIds } from "./sync/matching";
 import { accountIsDue, syncAll } from "./sync/run";
 import { builtinPaymentMatch, roundMoney } from "./sync/transfers";
 import { rollbackSync } from "./sync/undo";
@@ -771,7 +771,12 @@ export const workerEntry = {
       let all: any[];
       try { all = await ynabGetDeletedAccountTransactions(env, acct.ynab_account_id, since); }
       catch (e: any) { return json({ ok: false, error: e?.message || String(e) }, 502); }
-      const origin = (r: any) => !r.import_id ? "entered by hand" : String(r.import_id).startsWith("YNAB:") ? "Direct Import" : /^(pcc|pcp|wp|ynab-sync)/i.test(String(r.import_id)) ? "worker" : "other import";
+      // The worker mints its posted rows in Direct Import's own id format ("YNAB:amount:
+      // date:n") on purpose, so Direct Import recognizes them and never imports the
+      // charge again. The only record of which of those ids are the worker's is the
+      // posted-id pins, so they're what tells the two apart here.
+      const workerPosted = await workerPostedImportIds(env, acct.plaid_account_id);
+      const origin = (r: any) => rowOrigin(r.import_id, workerPosted);
       const view = (r: any) => ({ id: r.id, date: r.date, payee: r.payee_name || "", amount: roundMoney(Number(r.amount || 0) / 1000), cleared: r.cleared, import_id: r.import_id || "", origin: origin(r), is_transfer: !!r.transfer_transaction_id, memo: r.memo || "" });
       const deleted = all.filter(r => r.deleted).map(view).sort((a, b) => (a.date < b.date ? 1 : -1));
       const sum = (xs: any[]) => roundMoney(xs.reduce((t, x) => t + x.amount, 0));
@@ -811,6 +816,7 @@ export const workerEntry = {
       const days = Math.max(1, Math.min(90, Number(url.searchParams.get("days") || 30)));
       const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
       const rows = await ynabGetAccountTransactions(env, acct.ynab_account_id, since);
+      const workerPosted = await workerPostedImportIds(env, acct.plaid_account_id);
       let clearedTotal = 0, unclearedTotal = 0;
       const out = rows.map(r => {
         const amt = Number(r.amount || 0) / 1000;
@@ -820,6 +826,7 @@ export const workerEntry = {
           id: r.id, date: r.date, payee: r.payee_name || "", amount: amt,
           cleared: r.cleared, memo: r.memo || "", import_id: r.import_id || "",
           is_worker_pending: (r.import_id || "").startsWith(WORKER_PENDING_PREFIX),
+          origin: rowOrigin(r.import_id, workerPosted),
           is_transfer: !!r.transfer_transaction_id
         };
       });

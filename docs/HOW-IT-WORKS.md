@@ -104,3 +104,20 @@ respects that: it won't re-add the same charge.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md). The engine is `src/sync/engine.ts`; card and transfer rules are
 `src/sync/transfers.ts`; name matching is `src/sync/matching.ts`.
+
+## How you can tell the worker's rows apart
+
+Every row the worker creates carries an import id that says it's the worker's, with one deliberate exception:
+
+| Import id | Who made it |
+|---|---|
+| `wpend:...` (checking) or `pcc:...` (card) | the worker, from a pending charge |
+| `pcp:...` | the worker, a posted card charge |
+| `YNAB:<amount>:<date>:<n>` | Direct Import, **or** a posted checking charge the worker filled in |
+
+The last one is on purpose: the worker uses Direct Import's own format so that, if Direct Import later sees the
+same charge, it recognizes the row and doesn't book it a second time. The only record of which `YNAB:` ids are the
+worker's is its list of posted-id pins (KV `posted:<plaid account>`). The debug views (`/debug/ynab-register`,
+`/debug/ynab-history`) use that list and label those rows "worker (posted, Direct Import format)". If that list is
+ever lost, the worker treats its own posted rows like Direct Import rows: still matched one to one, never
+duplicated, but no longer offered by Undo.
