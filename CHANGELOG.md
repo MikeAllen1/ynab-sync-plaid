@@ -5,6 +5,21 @@ a new major version means you need to do something when you update.
 
 ## Unreleased
 
+Fixes from a security and reliability review:
+
+- **Strangers can't lock you out.** Wrong admin tokens are throttled per address only (an IPv6 /64 counts as
+  one). The old global limit let anyone make your correct token answer "too many attempts" indefinitely.
+- **Pause works while a sync is running.** It used to answer "busy" because the running sync held the lock.
+- **Webhooks about someone else's bank login are ignored.** Plaid signs every customer's webhooks with the same
+  keys, so a valid signature alone didn't make it yours.
+- **A real bank can't be linked with tokens stored in plain text.** In production, set `TOKEN_ENCRYPTION_KEY`
+  first (or `ALLOW_PLAINTEXT_TOKENS = "true"` to opt out). Existing tokens keep working.
+- **A failed transfer check no longer loses track of the row it just created**, so it stays the worker's (and
+  in Undo) instead of reading as a Direct Import row next run.
+- **Optional queue for webhook syncs** (`SYNC_QUEUE`, free plan): each gets up to 15 minutes instead of ~30
+  seconds, so a slow bank no longer leaves the dashboard "busy". See `wrangler.toml.example`.
+- Debug register views label the worker's posted rows (which use Direct Import's id format on purpose).
+
 Fixes from a workflow audit of the dashboard and setup page:
 
 - **Pause all syncing works.** The button sent a GET and always failed with "POST only".
