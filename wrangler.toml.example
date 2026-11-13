@@ -28,6 +28,21 @@ class_name = "SyncLock"
 tag = "v1"
 new_sqlite_classes = ["SyncLock"]
 
+# Optional, recommended: run webhook-triggered syncs on a Cloudflare Queue (free plan
+# included). A queue consumer gets up to 15 minutes; without this, a webhook's sync runs
+# in the ~30 seconds Cloudflare allows after the response, and one cut off there leaves
+# the dashboard saying "busy" for a few minutes. Create it once with:
+#   npx wrangler queues create ynab-sync-webhooks
+# [[queues.producers]]
+# binding = "SYNC_QUEUE"
+# queue = "ynab-sync-webhooks"
+#
+# [[queues.consumers]]
+# queue = "ynab-sync-webhooks"
+# max_batch_size = 10
+# max_batch_timeout = 5
+# max_retries = 3
+
 [vars]
 PLAID_ENV = "production"            # or "sandbox" to try it with Plaid's test banks
 YNAB_BUDGET_ID = "PASTE_YNAB_BUDGET_ID_HERE"
@@ -44,6 +59,21 @@ TIMEZONE = "America/New_York"       # your IANA time zone, for day boundaries
 # Optional email alerts (https://resend.com):
 #   npx wrangler secret put RESEND_API_KEY
 #   npx wrangler secret put ALERT_EMAIL_TO
-#   ALERT_EMAIL_FROM (optional, a [vars] entry or secret): sender, e.g. "YNAB Sync <alerts@yourdomain>"
+#   ALERT_EMAIL_FROM (optional, a # Optional, recommended: run webhook-triggered syncs on a Cloudflare Queue (free plan
+# included). A queue consumer gets up to 15 minutes; without this, a webhook's sync runs
+# in the ~30 seconds Cloudflare allows after the response, and one cut off there leaves
+# the dashboard saying "busy" for a few minutes. Create it once with:
+#   npx wrangler queues create ynab-sync-webhooks
+# [[queues.producers]]
+# binding = "SYNC_QUEUE"
+# queue = "ynab-sync-webhooks"
+#
+# [[queues.consumers]]
+# queue = "ynab-sync-webhooks"
+# max_batch_size = 10
+# max_batch_timeout = 5
+# max_retries = 3
+
+[vars] entry or secret): sender, e.g. "YNAB Sync <alerts@yourdomain>"
 # Optional JSON webhook alerts:
 #   npx wrangler secret put ALERT_WEBHOOK_URL

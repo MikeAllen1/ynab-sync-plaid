@@ -32,7 +32,7 @@ import { health, healthSummaryForMonitor, readJson } from "./health/status";
 import { isSyncEnabled, lockedJson } from "./lock/lock";
 import { plaidCall } from "./plaid/client";
 import { debugPlaidRawTransactions, resetRunCache } from "./plaid/fetch";
-import { configurePlaidWebhooks, forcePlaidRefresh, handlePlaidWebhook, refreshBeforeManualSync, verifyPlaidWebhook } from "./plaid/webhooks";
+import { configurePlaidWebhooks, consumeWebhookSyncBatch, forcePlaidRefresh, handlePlaidWebhook, refreshBeforeManualSync, verifyPlaidWebhook } from "./plaid/webhooks";
 import { DEFAULT_PAYEE_ALIASES, PAYEE_ALIASES_KV_KEY, getPayeeAliases, putPayeeAliases } from "./rules/payee-aliases";
 import { getSkipRules, putSkipRules } from "./rules/skip-rules";
 import { TRANSFER_LABELS_KV_KEY, getTransferLabels, putTransferLabels } from "./rules/transfer-labels";
@@ -46,7 +46,7 @@ import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
 import { accountIsDue, syncAll } from "./sync/run";
 import { builtinPaymentMatch, roundMoney } from "./sync/transfers";
 import { rollbackSync } from "./sync/undo";
-import { Env } from "./types";
+import { Env, WebhookSyncMessage } from "./types";
 import { staleCheck, storedVersion } from "./util/version";
 import { dashboardHtml } from "./ui/dashboard-page";
 import { setupHtml } from "./ui/setup-page";
@@ -116,6 +116,15 @@ export const workerEntry = {
     }));
     // Item health self-throttles (every ~6h), so calling it each tick is cheap.
     ctx.waitUntil(runItemHealthCheck(env).catch(() => {}));
+  },
+
+  // Webhook-triggered syncs, when a SYNC_QUEUE binding is configured (wrangler.toml.example).
+  // A queue consumer gets its own invocation (up to 15 minutes) instead of the short
+  // background time after a webhook's response.
+  async queue(batch: MessageBatch<WebhookSyncMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    resetRunCache();
+    env = withDurableAccountState(env);
+    await consumeWebhookSyncBatch(batch, env);
   },
 
   async routeFetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
