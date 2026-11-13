@@ -20,7 +20,7 @@ src/
   plaid/
     client.ts              plaidCall (one place that talks to Plaid)
     fetch.ts               Reading transaction windows (cached per run) + debug views
-    webhooks.ts            Verified webhooks, refresh requests, webhook setup
+    webhooks.ts            Verified webhooks, refresh requests, webhook setup, the SYNC_QUEUE consumer
 
   ynab/
     client.ts              Every YNAB API call (create/update/delete, accounts, history)

@@ -125,6 +125,17 @@ curl -X POST -H "x-admin-token: <your admin token>" https://ynab-sync.jane.worke
 
 Banks linked from `/setup` are registered automatically; this is only needed for banks linked before that, or if the worker's address changed.
 
+Recommended with webhooks: give their syncs a queue (included in Cloudflare's free plan). Without one, a webhook's
+sync runs in the short time Cloudflare allows after answering Plaid (about 30 seconds); a slow bank can get cut off
+there, and the dashboard then says "busy" for a few minutes. With a queue, each webhook sync gets up to 15 minutes.
+
+```bash
+npx wrangler queues create ynab-sync-webhooks
+```
+
+Then uncomment the `[[queues.producers]]` and `[[queues.consumers]]` blocks in `wrangler.toml` and deploy again.
+Nothing else changes; if the queue is ever unreachable, webhooks fall back to the old way.
+
 Scripts that call the worker's other actions work the same way: send `POST` with the `x-admin-token` header.
 
 ## Tune it for your banks (optional)

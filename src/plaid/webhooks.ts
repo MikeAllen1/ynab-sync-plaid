@@ -3,7 +3,7 @@ import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "./client";
 import { getAccounts, getEnabledAccounts } from "../store/accounts";
 import { markItemDue, syncAll } from "../sync/run";
-import { AccountConfig, Env } from "../types";
+import { AccountConfig, Env, WebhookSyncMessage } from "../types";
 import { friendlyErrorMessage } from "../util/errors";
 import { constantTimeEqual } from "../util/http";
 
@@ -216,33 +216,19 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     // earlier has just stamped the account as synced, the frequency gate says "not
     // due", and the data waits a full interval.
     const webhookItemId = body.item_id ? String(body.item_id) : undefined;
-    // Webhook delivery is only a trigger, not a durable job queue. Cloudflare may
-    // terminate waitUntil work; the scheduled full sync is the recovery backstop.
-    // Record failures and make this item due so the next cron run does not suppress
-    // recovery behind the normal per-account frequency gate.
-    ctx.waitUntil((async () => {
+    // With a SYNC_QUEUE binding, the sync runs as a queue consumer: its own invocation
+    // with up to 15 minutes, instead of the ~30 seconds Cloudflare gives background work
+    // after a response. A webhook sync cut off there never released the lock, so every
+    // sync and dashboard change answered "busy" until the lease ran out. Without the
+    // binding (or if sending fails), it runs in the background as before; the 15-minute
+    // cron is the backstop either way.
+    if (env.SYNC_QUEUE) {
       try {
-        const result = await syncAll(env, { trigger: `webhook:${body.webhook_code}`, webhookItemId });
-        if (result?.status === "completed_with_errors" || result?.status === "completed_partial" ||
-            result?.status === "lock_unavailable") {
-          if (webhookItemId) await markItemDue(env, webhookItemId);
-          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
-            ts: new Date().toISOString(), webhook_code: body.webhook_code,
-            item_id: webhookItemId || null, status: result.status
-          }));
-        } else if (result?.status === "completed") {
-          await env.SYNC_STATE.delete("last_webhook_sync_failure");
-        }
-      } catch (error: any) {
-        try {
-          if (webhookItemId) await markItemDue(env, webhookItemId);
-          await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
-            ts: new Date().toISOString(), webhook_code: body.webhook_code,
-            item_id: webhookItemId || null, error: friendlyErrorMessage(error)
-          }));
-        } catch { /* cron's full sync remains the final recovery path */ }
-      }
-    })());
+        await env.SYNC_QUEUE.send({ item_id: webhookItemId || null, webhook_code: String(body.webhook_code), ts: event.ts });
+        return { ok: true, action: "sync_queued", event };
+      } catch { /* fall through to the in-request background sync */ }
+    }
+    ctx.waitUntil(runWebhookSync(env, String(body.webhook_code), webhookItemId));
     return { ok: true, action: "sync_scheduled", event };
   }
 
@@ -303,6 +289,59 @@ export async function foreignWebhookReason(env: Env, body: any): Promise<string 
     return "item_id is not one of your bank logins";
   } catch {
     return null; // can't tell: the cron and the lock still protect everything
+  }
+}
+
+/**
+ * The sync a TRANSACTIONS webhook asks for. Never throws: failures are recorded and the
+ * item is marked due, so the next cron run doesn't wait out the account's interval.
+ * Returns the sync's status (or "error").
+ */
+export async function runWebhookSync(env: Env, webhookCode: string, webhookItemId?: string): Promise<string> {
+  try {
+    const result = await syncAll(env, { trigger: `webhook:${webhookCode}`, webhookItemId });
+    if (result?.status === "completed_with_errors" || result?.status === "completed_partial" ||
+        result?.status === "lock_unavailable") {
+      if (webhookItemId) await markItemDue(env, webhookItemId);
+      await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+        ts: new Date().toISOString(), webhook_code: webhookCode,
+        item_id: webhookItemId || null, status: result.status
+      }));
+    } else if (result?.status === "completed") {
+      await env.SYNC_STATE.delete("last_webhook_sync_failure");
+    }
+    return String(result?.status || "unknown");
+  } catch (error: any) {
+    try {
+      if (webhookItemId) await markItemDue(env, webhookItemId);
+      await env.SYNC_STATE.put("last_webhook_sync_failure", JSON.stringify({
+        ts: new Date().toISOString(), webhook_code: webhookCode,
+        item_id: webhookItemId || null, error: friendlyErrorMessage(error)
+      }));
+    } catch { /* cron's full sync remains the final recovery path */ }
+    return "error";
+  }
+}
+
+/**
+ * Queue consumer for SYNC_QUEUE. Messages for the same bank login in one batch are
+ * coalesced into one sync. A sync skipped because another run held the lock is retried
+ * a minute later (twice at most; the item is already marked due for the cron).
+ */
+export async function consumeWebhookSyncBatch(batch: MessageBatch<WebhookSyncMessage>, env: Env): Promise<void> {
+  const byItem = new Map<string, { code: string; messages: Message<WebhookSyncMessage>[] }>();
+  for (const msg of batch.messages) {
+    const key = msg.body?.item_id || "";
+    const entry = byItem.get(key) || { code: String(msg.body?.webhook_code || "SYNC_UPDATES_AVAILABLE"), messages: [] };
+    entry.messages.push(msg);
+    byItem.set(key, entry);
+  }
+  for (const [itemId, { code, messages }] of byItem) {
+    const status = await runWebhookSync(env, code, itemId || undefined);
+    for (const msg of messages) {
+      if (status === "skipped_locked" && msg.attempts < 3) msg.retry({ delaySeconds: 60 });
+      else msg.ack();
+    }
   }
 }
 

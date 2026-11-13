@@ -24,6 +24,8 @@ export interface Env {
   // Durable Object namespace backing the atomic sync mutex and transactional
   // diagnostic-history appends. Financial writes fail closed when it is absent.
   SYNC_LOCK?: DurableObjectNamespace;
+  /** Optional Cloudflare Queue for webhook-triggered syncs (see plaid/webhooks.ts). */
+  SYNC_QUEUE?: Queue<WebhookSyncMessage>;
 
   // Optional. If set, the Worker POSTs a JSON alert here when sync health
   // changes state (e.g. healthy -> error, or recovers). No-op when unset.
@@ -256,4 +258,11 @@ export interface SkipRule {
   transaction_type: "inflow" | "outflow" | "any";
   amounts?: number[];
   reason: string;
+}
+
+/** A Plaid webhook's request to sync one bank login, sent through SYNC_QUEUE. */
+export interface WebhookSyncMessage {
+  item_id: string | null;
+  webhook_code: string;
+  ts: string;
 }
