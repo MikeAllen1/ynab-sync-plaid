@@ -489,20 +489,21 @@ export const workerEntry = {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      return lockedJson(env, async () => {
-        await env.SYNC_STATE.put("sync:enabled", "false");
-        return { ok: true, sync_enabled: false };
-      });
+      // Deliberately NOT under the sync lock: Pause has to work while a sync is running
+      // (that sync holds the lock, so a locked Pause answered "busy" exactly when it was
+      // needed). The switch is one strongly consistent Durable Object key, and runs check
+      // it before every account and again just before writing.
+      await env.SYNC_STATE.put("sync:enabled", "false");
+      return json({ ok: true, sync_enabled: false });
     }
 
     if (url.pathname === "/resume") {
       if (req.method !== "POST") return json({ error: "POST only" }, 405);
       const unauthorized = await requireAdmin(req, env);
       if (unauthorized) return unauthorized;
-      return lockedJson(env, async () => {
-        await env.SYNC_STATE.put("sync:enabled", "true");
-        return { ok: true, sync_enabled: true };
-      });
+      // Same switch, same reasoning: no lock needed to flip it back.
+      await env.SYNC_STATE.put("sync:enabled", "true");
+      return json({ ok: true, sync_enabled: true });
     }
 
     // NEW: Plaid Link token creation (for setup page)

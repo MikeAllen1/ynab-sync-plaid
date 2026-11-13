@@ -1438,21 +1438,6 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
     if (!options.dryRun) await env.SYNC_STATE.put(undoIntentKey, JSON.stringify({ run_id: options.runId || "", trigger: options.trigger || "unknown", import_ids: creates.map(c => c.import_id) }));
     createdResult = await ynabUpsert(env, creates);
     rejected.push(...(createdResult.duplicate_import_ids || []));
-    // Verify both register legs before treating a transfer create as complete.
-    const transferCreates = creates.filter(c => !!c.payee_id);
-    if (transferCreates.length > 0) {
-      const afterTransfers = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
-      const byImportId = new Map(afterTransfers.filter(r => r.import_id).map(r => [r.import_id as string, r]));
-      for (const transfer of transferCreates) {
-        const target = ctx.accounts.find(a => ctx.accountPayeeByNickname[a.nickname] === transfer.payee_id);
-        const sourceRow = byImportId.get(transfer.import_id);
-        if (!target || !sourceRow) {
-          throw new Error(`YNAB transfer verification failed: could not resolve transfer ${transfer.import_id} to its source and destination accounts.`);
-        }
-        await ynabVerifyTransferPair(env, sourceRow.id, acct.ynab_account_id, target.ynab_account_id, transfer.amount);
-      }
-    }
-
     // YNAB can save the rows and still answer with an error (a timeout); the retry
     // then reports them as duplicates. An id that wasn't in YNAB before this run but
     // is there now was created by this run, not refused.
@@ -1490,6 +1475,25 @@ export async function syncAccountEngine(env: Env, acct: AccountConfig, skipRules
       await appendUndo(env, options.runId || crypto.randomUUID(), options.trigger || "unknown", createdIds.map(id => ({ id, account: acct.nickname })));
     }
     await env.SYNC_STATE.delete(undoIntentKey);
+    // Verify both register legs before treating a transfer create as complete. This
+    // runs AFTER the pins and the undo record above are saved: a verification failure
+    // (or a timeout reading the pair) used to throw while YNAB already held the new
+    // rows, so the next run no longer knew they were the worker's and treated them as
+    // Direct Import rows (or, for an unpaired transfer, could book it a second time).
+    // A refused import id wasn't created by this run, so there's nothing of ours to verify.
+    const transferCreates = creates.filter(c => !!c.payee_id && !refused.has(c.import_id));
+    if (transferCreates.length > 0) {
+      const afterTransfers = await ynabGetAccountTransactions(env, acct.ynab_account_id, snapshotStart);
+      const byImportId = new Map(afterTransfers.filter(r => r.import_id).map(r => [r.import_id as string, r]));
+      for (const transfer of transferCreates) {
+        const target = ctx.accounts.find(a => ctx.accountPayeeByNickname[a.nickname] === transfer.payee_id);
+        const sourceRow = byImportId.get(transfer.import_id);
+        if (!target || !sourceRow) {
+          throw new Error(`YNAB transfer verification failed: could not resolve transfer ${transfer.import_id} to its source and destination accounts.`);
+        }
+        await ynabVerifyTransferPair(env, sourceRow.id, acct.ynab_account_id, target.ynab_account_id, transfer.amount);
+      }
+    }
   }
   // Re-read existing YNAB rows immediately before mutation. A manual edit to a
   // field this plan would overwrite (or any visible edit to a row slated for

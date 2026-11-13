@@ -66,9 +66,9 @@ test("Plaid's signed webhook route remains exempt from browser Origin checks", a
 });
 
 test("header-token requests from scripts (no Origin) can call POST actions", async () => {
-  // /pause reaches the lock (absent in this test env, so 503): past both the Origin
-  // check and the admin check.
-  const response = await workerEntry.routeFetch(new Request("https://worker.example/pause", {
+  // /skip-rules/reset reaches the lock (absent in this test env, so 503): past both the
+  // Origin check and the admin check.
+  const response = await workerEntry.routeFetch(new Request("https://worker.example/skip-rules/reset", {
     method: "POST",
     headers: { "x-admin-token": "admin-test-token" }
   }), env, ctx);
