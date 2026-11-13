@@ -12,6 +12,8 @@ export interface Env {
   // KV encrypted (AES-256-GCM). _PREVIOUS is accepted for reading during a rotation.
   TOKEN_ENCRYPTION_KEY?: string;
   TOKEN_ENCRYPTION_KEY_PREVIOUS?: string;
+  /** "true" lets a production worker store new bank tokens unencrypted (not recommended). */
+  ALLOW_PLAINTEXT_TOKENS?: string;
 
   PLAID_ENV: string;
   YNAB_BUDGET_ID: string;

@@ -1,4 +1,4 @@
-import { runItemHealthCheck } from "../health/items";
+import { getItemHealth, runItemHealthCheck } from "../health/items";
 import { isSyncEnabled } from "../lock/lock";
 import { plaidCall } from "./client";
 import { getAccounts, getEnabledAccounts } from "../store/accounts";
@@ -174,6 +174,13 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
     environment: body.environment || null
   };
 
+  // Plaid signs every customer's webhooks with the same keys, so a valid signature only
+  // proves Plaid sent it, not that it's about one of YOUR bank logins. Someone else's
+  // Item pointed at this URL would otherwise force health checks and KV writes on their
+  // schedule. Drop it before any side effect.
+  const foreign = await foreignWebhookReason(env, body);
+  if (foreign) return { ok: true, action: "ignored_not_ours", reason: foreign, event };
+
   // Claim the exact signed payload atomically so Plaid retries cannot launch
   // duplicate syncs or duplicate item-health actions.
   const receipt = await claimWebhookReceipt(env, await webhookReceiptMaterial(rawBody, verificationHeader));
@@ -265,6 +272,39 @@ export async function handlePlaidWebhook(rawBody: string, env: Env, ctx: Executi
   return { ok: true, action: "recorded_only", event };
 }
 
+
+/**
+ * Why a verified webhook isn't for this worker, or null when it is (or when that can't
+ * be told). Wrong Plaid environment, or an item_id that matches none of your bank
+ * logins. If any mapped account's login is still unknown (linked before item ids were
+ * stored, and not yet learned by a health check), the webhook is let through: missing a
+ * real one would only delay a sync, but this check must never drop your own.
+ */
+export async function foreignWebhookReason(env: Env, body: any): Promise<string | null> {
+  if (body?.environment && env.PLAID_ENV && String(body.environment) !== String(env.PLAID_ENV)) {
+    return `environment ${body.environment} is not this worker's (${env.PLAID_ENV})`;
+  }
+  const itemId = body?.item_id ? String(body.item_id) : "";
+  if (!itemId) return null;
+  try {
+    const accounts = await getAccounts(env);
+    const health = await getItemHealth(env);
+    const known = new Set<string>();
+    const learned = new Set<string>();
+    for (const h of Object.values(health)) {
+      if (h.item_id) known.add(h.item_id);
+      for (const n of h.nicknames || []) learned.add(n);
+    }
+    for (const a of accounts) if (a.item_id) known.add(a.item_id);
+    if (known.has(itemId)) return null;
+    if (accounts.some(a => !a.item_id && !learned.has(a.nickname))) return null;
+    // A bank linked in the last hour but not added yet: its first webhooks are expected.
+    if (await env.SYNC_STATE.get(`pending_item:${itemId}`)) return null;
+    return "item_id is not one of your bank logins";
+  } catch {
+    return null; // can't tell: the cron and the lock still protect everything
+  }
+}
 
 export async function claimWebhookReceipt(env: Env, rawBody: string): Promise<{ claimed: boolean; digest: string }> {
   if (!env.SYNC_LOCK) throw new Error("SYNC_LOCK is required for webhook replay protection");

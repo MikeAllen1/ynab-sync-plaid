@@ -53,6 +53,12 @@ export function tokenEncryptionConfigured(env: Env): boolean {
   return !!env.TOKEN_ENCRYPTION_KEY;
 }
 
+/** Production workers don't store NEW bank tokens unencrypted unless explicitly allowed. */
+export function plaintextTokensRefused(env: Env): boolean {
+  return String(env.PLAID_ENV || "").toLowerCase() === "production" && !env.TOKEN_ENCRYPTION_KEY &&
+    String(env.ALLOW_PLAINTEXT_TOKENS || "").toLowerCase() !== "true";
+}
+
 export function isSealedToken(value: string | undefined | null): boolean {
   return String(value || "").startsWith(SEALED_TOKEN_PREFIX);
 }

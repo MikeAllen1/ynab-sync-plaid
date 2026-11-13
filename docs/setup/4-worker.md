@@ -41,7 +41,7 @@ npx wrangler secret put ADMIN_TOKEN
 `ADMIN_TOKEN` is a password you make up (long and random, e.g. from a password manager). Anyone with it can use
 your dashboard, so don't reuse a real password.
 
-Recommended: encrypt your bank tokens at rest. With this set, the Plaid access tokens the worker keeps in KV are
+Encrypt your bank tokens at rest (required to link a bank when `PLAID_ENV = "production"`). With this set, the Plaid access tokens the worker keeps in KV are
 stored encrypted, so someone who can read your KV namespace still can't use them:
 
 ```bash
@@ -54,6 +54,10 @@ bank would need linking again. If you add the key to a worker that already has b
 **Recovery** tab and click **Encrypt bank tokens** once. To rotate it, move the old value to
 `TOKEN_ENCRYPTION_KEY_PREVIOUS`, set a new `TOKEN_ENCRYPTION_KEY`, click **Encrypt bank tokens**, then delete the
 previous key.
+
+A production worker without the key refuses to link a new bank, so a real bank token is never stored in plain text
+by accident. Banks linked before this rule keep working; click **Encrypt bank tokens** after setting the key. To
+store tokens unencrypted anyway (not recommended), set `ALLOW_PLAINTEXT_TOKENS = "true"` in `[vars]`.
 
 Optional email when a bank needs reconnecting or syncing keeps failing, through [Resend](https://resend.com)
 (free tier):

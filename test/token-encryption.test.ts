@@ -60,3 +60,24 @@ test("without a key nothing changes: tokens are stored as before", async () => {
   await putAccounts(env, [account]);
   assert.match(values.get("account_map") || "", /access-production-secret/);
 });
+
+test("a production worker without TOKEN_ENCRYPTION_KEY refuses to store a new bank token", async () => {
+  const { plaintextTokensRefused } = await import("../src/util/token-crypto");
+  assert.equal(plaintextTokensRefused({ PLAID_ENV: "production" } as any), true);
+  assert.equal(plaintextTokensRefused({ PLAID_ENV: "production", TOKEN_ENCRYPTION_KEY: "k" } as any), false);
+  assert.equal(plaintextTokensRefused({ PLAID_ENV: "production", ALLOW_PLAINTEXT_TOKENS: "true" } as any), false);
+  assert.equal(plaintextTokensRefused({ PLAID_ENV: "sandbox" } as any), false);
+  const { workerEntry } = await import("../src/index");
+  let plaidCalled = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { plaidCalled = true; return Response.json({}); }) as any;
+  try {
+    const env = { ADMIN_TOKEN: "t", PLAID_ENV: "production", SYNC_STATE: { get: async () => null, put: async () => {}, delete: async () => {} } } as any;
+    const resp = await workerEntry.routeFetch(new Request("https://w.example/exchange-token", {
+      method: "POST", headers: { "x-admin-token": "t", "Content-Type": "application/json" }, body: JSON.stringify({ public_token: "public-x" })
+    }), env, { waitUntil() {} } as any);
+    assert.equal(resp.status, 400);
+    assert.match(((await resp.json()) as any).error, /TOKEN_ENCRYPTION_KEY/);
+    assert.equal(plaidCalled, false, "the public token isn't even exchanged");
+  } finally { globalThis.fetch = original; }
+});
