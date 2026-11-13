@@ -39,7 +39,7 @@ import { TRANSFER_LABELS_KV_KEY, getTransferLabels, putTransferLabels } from "./
 import { ACCOUNT_CONFIG_BUNDLE_KEY, ACCOUNT_MAP_KV_KEY, CONFIG_UNREADABLE, accountParam, cleanPaymentMatch, getAccountAutomationSettings, getAccounts, maskToken, migratePlaidAccountIdentity, putAccountAutomationSettings, putAccounts, resealAccountTokens, saveAccountConfiguration, tokenStorageMode, saveAccountsMerged, settingForAccount } from "./store/accounts";
 import { resetCardEpoch } from "./store/card-epoch";
 import { withDurableAccountState } from "./store/durable-state";
-import { openToken, sealToken } from "./util/token-crypto";
+import { openToken, plaintextTokensRefused, sealToken } from "./util/token-crypto";
 import { getEventLog } from "./store/event-log";
 import { bootstrap } from "./sync/engine";
 import { WORKER_PENDING_PREFIX, shortStableHash } from "./sync/matching";
@@ -622,10 +622,18 @@ export const workerEntry = {
       try {
         const body = await req.json() as any;
         if (!body.public_token) return json({ ok: false, error: "public_token required" }, 400);
+        // Real bank tokens are bearer credentials: in production, refuse to store a new one
+        // in plain text. Existing plaintext tokens keep working (and Encrypt bank tokens
+        // seals them once the key is set). ALLOW_PLAINTEXT_TOKENS = "true" opts out.
+        if (plaintextTokensRefused(env)) {
+          return json({ ok: false, error: "Set TOKEN_ENCRYPTION_KEY before linking a real bank: openssl rand -base64 32, then npx wrangler secret put TOKEN_ENCRYPTION_KEY. (Or set ALLOW_PLAINTEXT_TOKENS = \"true\" to store tokens unencrypted, not recommended.)" }, 400);
+        }
         const ex = await plaidCall(env, "/item/public_token/exchange", { public_token: body.public_token });
         const accts = await plaidCall(env, "/accounts/get", { access_token: ex.access_token });
         const linkId = crypto.randomUUID();
         await env.SYNC_STATE.put(`pending_link:${linkId}`, JSON.stringify({ access_token: await sealToken(env, ex.access_token), item_id: ex.item_id }), { expirationTtl: 3600 });
+        // Lets this new login's first webhooks through the "is this one of yours" check.
+        if (ex.item_id) await env.SYNC_STATE.put(`pending_item:${ex.item_id}`, "1", { expirationTtl: 3600 });
         return json({
           ok: true,
           link_id: linkId,

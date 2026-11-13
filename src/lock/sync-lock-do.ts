@@ -7,7 +7,6 @@ import { LEGACY_MIGRATED_PREFIXES, isDurableStateKey } from "../store/durable-st
 // and webhooks cannot overwrite one another's history entries.
 export const AUTH_WINDOW_MS = 15 * 60 * 1000;
 export const AUTH_FAILS_PER_IP = 10;
-export const AUTH_FAILS_GLOBAL = 50;
 
 const HISTORY_LIMITS: Record<string, number> = {
   event_log: 200,
@@ -200,15 +199,27 @@ export class SyncLock {
       return new Response("not found", { status: 404 });
     }
 
-    // Failed admin-token attempts, per client IP and globally, in a rolling window.
+    // Failed admin-token attempts, per client address, in a rolling window.
     // "/auth/check" says whether a key is currently throttled; "/auth/fail" records a
     // failure. Successful logins don't reset anything: the window simply rolls.
     if ((url.pathname === "/auth/check" || url.pathname === "/auth/fail") && request.method === "POST") {
       let body: any;
       try { body = await request.json(); } catch { return Response.json({ error: "invalid auth request" }, { status: 400 }); }
-      const keys = (Array.isArray(body?.keys) ? body.keys : []).map((k: unknown) => String(k)).filter((k: string) => /^[a-z]+:[\w.:-]{1,80}$/.test(k)).slice(0, 4);
-      const limits: Record<string, number> = { ip: AUTH_FAILS_PER_IP, global: AUTH_FAILS_GLOBAL };
+      // Per-address buckets only ("ip:" IPv4, "ip6:" an IPv6 /64). A global bucket let
+      // strangers lock the owner out, so any other key (an older worker's "global:all")
+      // is ignored rather than enforced.
+      const limits: Record<string, number> = { ip: AUTH_FAILS_PER_IP, ip6: AUTH_FAILS_PER_IP };
+      const keys = (Array.isArray(body?.keys) ? body.keys : []).map((k: unknown) => String(k)).filter((k: string) => /^[a-z0-9]+:[\w.:-]{1,80}$/.test(k) && k.split(":")[0] in limits).slice(0, 4);
       const result = await this.state.storage.transaction(async txn => {
+        // Each new address leaves a key behind; sweep expired ones as failures arrive so
+        // rotating addresses can't grow this storage without bound.
+        if (url.pathname === "/auth/fail") {
+          const old = await txn.list<number[]>({ prefix: "auth_fail:", limit: 200 });
+          for (const [k, v] of old) {
+            const last = Array.isArray(v) && v.length ? v[v.length - 1] : 0;
+            if (!Number.isFinite(last) || now - last >= AUTH_WINDOW_MS) await txn.delete(k);
+          }
+        }
         let retryAfterMs = 0;
         for (const key of keys) {
           const stored = await txn.get<number[]>(`auth_fail:${key}`);

@@ -250,13 +250,44 @@ export async function isValidAdminSessionCookie(req: Request, env: Env): Promise
 
 // ---------- Admin-token attempt throttling ----------
 // The admin token is long and random, so guessing it is impractical; this is defense
-// in depth. Failed attempts are counted per client IP and globally in the SyncLock
-// Durable Object. If the Durable Object can't be reached, attempts are not throttled
-// (the token is still required): an outage must never lock the owner out.
+// in depth. Failed attempts are counted per client address in the SyncLock Durable
+// Object. If the Durable Object can't be reached, attempts are not throttled (the token
+// is still required): an outage must never lock the owner out.
+//
+// There is deliberately no global (all-addresses) limit. A global bucket lets anyone on
+// the internet lock the owner out: 50 wrong guesses from rotating addresses every 15
+// minutes kept the correct token answering 429, for the dashboard and for scripts. The
+// token's length is the real defense; the per-address limit only slows one source down.
+// IPv6 clients are bucketed by their /64, since one host usually controls a whole /64.
+
+export function clientAddressKey(raw: string | null): string {
+  let ip = String(raw || "").trim();
+  // IPv4-mapped IPv6 ("::ffff:203.0.113.7") is the IPv4 address.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped) ip = mapped[1];
+  if (ip.includes(":")) {
+    const groups = expandIpv6(ip);
+    if (groups) return `ip6:${groups.slice(0, 4).join(":")}`;
+  }
+  return `ip:${ip.replace(/[^\w.:-]/g, "").slice(0, 80) || "unknown"}`;
+}
+
+function expandIpv6(ip: string): string[] | null {
+  const addr = ip.split("%")[0];
+  if (!/^[0-9a-f:]+$/i.test(addr)) return null;
+  const halves = addr.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...tail];
+  if (groups.length < 4) return null;
+  return groups.map(g => (g.replace(/^0+(?=.)/, "") || "0").toLowerCase());
+}
 
 function authKeys(req: Request): string[] {
-  const ip = (req.headers.get("CF-Connecting-IP") || "unknown").replace(/[^\w.:-]/g, "").slice(0, 80) || "unknown";
-  return [`ip:${ip}`, "global:all"];
+  return [clientAddressKey(req.headers.get("CF-Connecting-IP"))];
 }
 
 async function authLimiter(env: Env, req: Request, action: "check" | "fail"): Promise<{ blocked: boolean; retry_after_seconds: number }> {
