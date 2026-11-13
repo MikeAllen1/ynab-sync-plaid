@@ -46,6 +46,29 @@ export function ynabImportId(milliunits: number, date: string, occurrence: numbe
   return `YNAB:${milliunits}:${date}:${occurrence}`;
 }
 
+// Who created a YNAB row, from its import id. Worker-created posted rows use Direct
+// Import's id format on purpose (so Direct Import never books the charge a second time),
+// so they can only be told apart from Direct Import's own rows by the posted-id pins
+// (KV "posted:<plaid account>"). Losing those pins makes them read as Direct Import rows.
+export type RowOrigin = "entered by hand" | "worker" | "worker (posted, Direct Import format)" | "Direct Import" | "other import";
+export function rowOrigin(importId: string | null | undefined, workerPosted: Set<string>): RowOrigin {
+  const id = String(importId || "");
+  if (!id) return "entered by hand";
+  if (workerPosted.has(id)) return "worker (posted, Direct Import format)";
+  if (id.startsWith("YNAB:")) return "Direct Import";
+  if (/^(wpend:|pl:|pcc:|pcp:|axfix:|ynab-sync)/i.test(id)) return "worker";
+  return "other import";
+}
+
+/** The posted import ids this worker minted for an account (its posted-id pins). */
+export async function workerPostedImportIds(env: Env, plaidAccountId: string): Promise<Set<string>> {
+  try {
+    const raw = await env.SYNC_STATE.get(`posted:${plaidAccountId}`);
+    const map = raw ? JSON.parse(raw) : {};
+    return new Set(Object.values(map && typeof map === "object" ? map : {}).map(v => String(v)));
+  } catch { return new Set(); }
+}
+
 // The current epoch for a card account (defaults to "1"). Bumped by /reset-card.
 export async function getCcEpoch(env: Env, plaidAccountId: string): Promise<string> {
   return (await env.SYNC_STATE.get(`cc_epoch:${plaidAccountId}`)) || "1";
